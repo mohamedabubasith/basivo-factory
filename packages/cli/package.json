@@ -1,0 +1,11 @@
+{
+  "name": "@basivo-factory/cli",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "factory": "./src/index.ts"
+  },
+  "dependencies": {
+    "@basivo-factory/core": "workspace:*"
+  }
+}
