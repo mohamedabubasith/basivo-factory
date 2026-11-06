@@ -25,6 +25,32 @@ Every role has a star name. Agents can run on Claude Code or Codex, chosen per s
 | Vega | review: reviews the change before the PR | agent |
 | Arcturus | ship: opens the PR and deploys | code |
 
+## Configuring the agents
+
+A target repo configures the agents in `.factory/`, the same pattern as Copilot's `.github/agents`, Claude Code's
+`.claude/agents` and Factory's droids. Copy `templates/repo/.factory` to start.
+
+```
+.factory/
+  agents/polaris.md | sirius.md | vega.md   frontmatter (runtime, model, mcp, skills, knowledge, limits) + role prompt
+  skills/<name>/SKILL.md                     open Agent Skills format; the same skill works in Claude and Codex
+  mcp.json                                   extra MCP servers by name; secrets as ${VAR} from CI secrets
+  knowledge/**.md                            decisions, conventions, runbooks
+```
+
+What reaches the agent, and how:
+
+| Part | How it reaches the agent |
+|---|---|
+| Role prompt | Pushed, capped at 6,000 characters |
+| Skills | Name and description listed (at most 8); the body loads only when used |
+| Knowledge | Never pushed: `kb_search` / `kb_read`, each doc flagged stale when unreviewed, old or its code changed |
+| Memory | Never pushed: `ledger` / `facts` / `similar` / `record_fact` |
+| MCP servers | Only those the profile lists, plus `factory-memory` |
+
+Agents never see the user's own skills, settings or `~/.agents/skills`, and an agent that edits anything under
+`.factory/` has the edit reverted.
+
 ## Status
 
 | Milestone | Scope | State |

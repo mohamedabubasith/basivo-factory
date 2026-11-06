@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { Codex, type ThreadEvent } from '@openai/codex-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
 import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { codexSkillConfig } from './skills.ts'
 
 // Each run gets an empty CODEX_HOME, so the user's config.toml, AGENTS.md and memories never reach the agent.
 // The login is symlinked, not copied: Codex refresh tokens are single-use, so a copy would go stale the moment
@@ -63,8 +64,9 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
         apiKey,
         env: agentEnv({ CODEX_HOME: isolation.home }),
         config: {
-          // Skills from ~/.agents/skills would otherwise be advertised to (and read by) every run.
-          skills: { include_instructions: false },
+          // Only the role's skills: everything else Codex would discover is switched off (see skills.ts).
+          skills: codexSkillConfig(req.skills, isolation.home, req.cwd),
+          ...(req.instructions ? { developer_instructions: req.instructions } : {}),
           mcp_servers: Object.fromEntries(
             Object.entries(req.mcpServers).map(([n, s]) => [
               n,
@@ -84,7 +86,7 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
       })
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
-      req.log.write('start', { runner: 'codex', model: model ?? 'default', access: req.access, briefChars: req.brief.length })
+      req.log.write('start', { runner: 'codex', model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
       let final = ''
       try {
         const { events } = await thread.runStreamed(`${SYSTEM_PROMPT}\n\n${req.brief}`, { outputSchema: reportJsonSchema(), signal: abort.signal })

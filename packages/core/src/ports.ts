@@ -33,9 +33,15 @@ export interface Forge {
 
 export type McpServer = { command: string; args: string[]; env?: Record<string, string> }
 
+// A skill in the open Agent Skills format: a folder holding SKILL.md (name + description frontmatter, body),
+// plus optional scripts/ and references/. Only name and description reach the prompt; the agent loads the rest.
+export type SkillRef = { name: string; description: string; dir: string }
+
 export type AgentRequest = {
   brief: string
   cwd: string
+  instructions: string // the role's own prompt from .factory/agents/<star>.md, added after the base prompt
+  skills: SkillRef[] // only these skills are visible to the agent
   // read-only for planning and review, write for dev.
   access: 'read-only' | 'write'
   mcpServers: Record<string, McpServer>

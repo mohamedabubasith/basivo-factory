@@ -5,6 +5,7 @@
 import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
 import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { claudeSkillPlugin } from './skills.ts'
 
 const READ_TOOLS = ['Read', 'Grep', 'Glob']
 const WRITE_TOOLS = ['Edit', 'Write', 'Bash']
@@ -50,11 +51,13 @@ function usageOf(m: SDKResultMessage): Usage {
 export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
   return {
     async run(req: AgentRequest): Promise<AgentResult> {
-      const tools = req.access === 'write' ? [...READ_TOOLS, ...WRITE_TOOLS] : READ_TOOLS
+      const plugin = claudeSkillPlugin(req.skills)
+      // The Skill tool is what lets the agent open a skill's body; without it the skills are invisible.
+      const tools = [...READ_TOOLS, ...(req.access === 'write' ? WRITE_TOOLS : []), ...(plugin ? ['Skill'] : [])]
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
       const stderr: string[] = []
-      req.log.write('start', { runner: 'claude', model: model ?? 'default', access: req.access, briefChars: req.brief.length })
+      req.log.write('start', { runner: 'claude', model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
       let usage = emptyUsage()
       const fail = (error: string, errorClass = classifyError(error)): AgentResult => {
         req.log.write('error', { error, errorClass })
@@ -66,12 +69,13 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
           options: {
             cwd: req.cwd,
             model,
-            systemPrompt: SYSTEM_PROMPT,
+            systemPrompt: req.instructions ? [SYSTEM_PROMPT, req.instructions] : SYSTEM_PROMPT,
             tools,
             allowedTools: [...tools, ...Object.keys(req.mcpServers).map(name => `mcp__${name}`)],
             permissionMode: 'dontAsk',
             settingSources: [],
-            skills: [],
+            skills: plugin?.names ?? [],
+            plugins: plugin ? [{ type: 'local' as const, path: plugin.path, skipMcpDiscovery: true }] : [],
             strictMcpConfig: true,
             persistSession: false,
             mcpServers: Object.fromEntries(Object.entries(req.mcpServers).map(([n, s]) => [n, { type: 'stdio' as const, ...s }])),
@@ -102,6 +106,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
         return fail(`${String(e)}${stderr.length ? ` | stderr: ${stderr.join('').slice(-800)}` : ''}`)
       } finally {
         clearTimeout(timer)
+        plugin?.done()
       }
     },
   }

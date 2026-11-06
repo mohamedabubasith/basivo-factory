@@ -3,7 +3,7 @@
 
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { agentEnv } from '@basivo-factory/agents'
+import { agentEnv, type RoleProfile } from '@basivo-factory/agents'
 import {
   buildBrief, checkClaims, COUNTS_AS_ATTEMPT, estimateTokens, failureSignature, fileRunLog, MAX_ATTEMPTS, ROLES, roleLabel,
   type AgentResult, type AgentRunner, type Attempt, type ClaimCheck,
@@ -26,6 +26,7 @@ export type DevStepInput = {
   files: string[]
   runner: AgentRunner
   runnerName: string
+  profile: RoleProfile // Sirius's profile from .factory/agents/sirius.md (loadProfile(repoDir, 'dev'))
   logDir: string
   limits?: { maxTurns: number; maxBudgetUsd: number; timeoutMs: number }
 }
@@ -105,15 +106,20 @@ export async function devStep(input: DevStepInput): Promise<DevStepOutcome> {
   })
   log.write('text', { brief })
 
+  const { profile } = input
+  const memoryArgs = [MEMORY_BIN, '--root', input.memoryRoot, '--repo-dir', input.repoDir, '--repo', input.repo, '--ticket', input.ticket]
   const agent = await input.runner.run({
     brief, cwd: input.repoDir, access: 'write', log,
+    instructions: profile.instructions,
+    skills: profile.skillRefs,
     mcpServers: {
-      'factory-memory': {
-        command: process.execPath,
-        args: [MEMORY_BIN, '--root', input.memoryRoot, '--repo-dir', input.repoDir, '--repo', input.repo, '--ticket', input.ticket],
-      },
+      ...profile.mcpServers,
+      'factory-memory': { command: process.execPath, args: [...memoryArgs, ...profile.knowledge.flatMap(g => ['--knowledge', g])] },
     },
-    ...(input.limits ?? DEFAULT_LIMITS),
+    ...DEFAULT_LIMITS,
+    ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
+    ...(profile.maxBudgetUsd ? { maxBudgetUsd: profile.maxBudgetUsd } : {}),
+    ...input.limits,
   })
 
   // A rate limit or a lapsed login is not the agent's fault: drop any half-made change and keep the attempt.
@@ -137,7 +143,8 @@ export async function devStep(input: DevStepInput): Promise<DevStepOutcome> {
     fatal: false, agent, claims, briefTokens: estimateTokens(brief), logFile,
   })
 
-  const touched = changed.filter(p => isProtected(p, input.step.protect))
+  // The graded tests, plus the agents' own profiles, skills and knowledge: no agent rewrites its instructions.
+  const touched = changed.filter(p => isProtected(p, [...input.step.protect, '.factory/']))
   if (touched.length) {
     git(input.repoDir, 'checkout', base, '--', ...touched.filter(p => lines(git(input.repoDir, 'ls-tree', '--name-only', base, '--', p)).length))
     git(input.repoDir, 'clean', '-qf', '--', ...touched)

@@ -10,6 +10,7 @@ import { parseArgs } from 'node:util'
 import { runnerFor } from '@basivo-factory/agents'
 import { MAX_ATTEMPTS, type LogEvent } from '@basivo-factory/core'
 import { blobShas, git, headCommit, MemoryStore } from '@basivo-factory/memory'
+import { loadProfile } from '@basivo-factory/agents'
 import { devStep } from './dev-step.ts'
 
 const { values } = parseArgs({
@@ -35,6 +36,33 @@ export function total(items) {
 }
 `,
   'src/format.js': `export const money = cents => (cents / 100).toFixed(2)\n`,
+  // Sirius's profile, one skill and one ADR: the live run shows whether agents use skills and the knowledge base.
+  '.factory/agents/sirius.md': `---
+skills: [money-rounding]
+knowledge: ["docs/**/*.md"]
+---
+You are Sirius, the developer on the cart service. Keep changes small and inside src/.
+Check the knowledge base for money decisions before changing how amounts are calculated.
+`,
+  '.factory/skills/money-rounding/SKILL.md': `---
+name: money-rounding
+description: Use when code adds, multiplies or rounds money amounts, such as prices, line totals or cart totals.
+---
+# Money rounding
+- Floating point sums such as 0.1 * 3 do not equal 0.3 exactly.
+- Round to whole cents with Math.round(value * 100) / 100.
+- Follow docs/adr/0001-money.md for where rounding happens.
+`,
+  'docs/adr/0001-money.md': `---
+title: Money is rounded once, at the end
+summary: Cart totals are summed unrounded and rounded to whole cents once, after summing every line.
+reviewed: 2026-10-01
+sources: [src/cart.js]
+---
+# Money is rounded once, at the end
+Line totals (price × qty) are kept unrounded. total() sums them and rounds the sum to whole cents once.
+Rounding each line separately drifts by a cent on large carts, so it is not allowed.
+`,
   'test/cart.test.js': `import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { total } from '../src/cart.js'
@@ -65,7 +93,12 @@ function countTools(logFile: string) {
   const events = readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l) as LogEvent)
   const calls = events.filter(e => e.kind === 'tool').map(e => (e.data as { name: string }).name)
   const errors = events.filter(e => e.kind === 'tool_result' && (e.data as { isError?: boolean }).isError).length
-  return { calls: calls.length, errors, memory: calls.filter(n => n.startsWith('mcp__factory-memory')).map(n => n.split('__')[2]) }
+  return {
+    calls: calls.length, errors,
+    memory: calls.filter(n => n.startsWith('mcp__factory-memory')).map(n => n.split('__')[2]),
+    // Claude opens a skill with the Skill tool; Codex reads the SKILL.md file from its skills folder.
+    skillUsed: calls.some(n => n === 'Skill') || events.some(e => e.kind === 'tool' && /SKILL\.md/.test(JSON.stringify(e.data))),
+  }
 }
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-')
@@ -95,7 +128,7 @@ for (const name of runners) {
     const out = await devStep({
       repoDir, memoryRoot, repo: 'demo/cart', ticket: 'CART-7', title: 'Cart total ignores quantity',
       step: { n: 1, of: 1, task: 'total() must charge price × qty per line and round the total to whole cents', doneWhen: 'npm test', protect: ['test/'] },
-      attempt, roundAttempt: attempt, files: ['src/cart.js', 'test/cart.test.js'], runner: runnerFor(name, modelFor(name)), runnerName: name, logDir: join(base, 'logs'),
+      attempt, roundAttempt: attempt, files: ['src/cart.js', 'test/cart.test.js'], runner: runnerFor(name, modelFor(name)), runnerName: name, profile: loadProfile(repoDir, 'dev'), logDir: join(base, 'logs'),
     })
     const tools = countTools(out.logFile)
     const result = out.kind === 'retry_later' ? `retry later (${out.reason})` : out.attempt.result
@@ -103,7 +136,7 @@ for (const name of runners) {
       runner: name, attempt, test: result, fatal: out.kind === 'attempt' ? out.fatal : false,
       failureReason: out.kind === 'attempt' ? out.attempt.failureReason : null, agentError: out.agent?.error ?? null,
       briefTokens: out.briefTokens, ...out.agent?.usage, toolCalls: tools.calls, toolErrors: tools.errors,
-      memoryTools: tools.memory.join(',') || '-',
+      memoryTools: tools.memory.join(',') || '-', skillUsed: tools.skillUsed,
       honest: out.kind === 'attempt' ? (out.claims?.honest ?? null) : null,
       claimedButUnchanged: (out.kind === 'attempt' && out.claims?.claimedButUnchanged.join(',')) || '-',
       changedButUnclaimed: (out.kind === 'attempt' && out.claims?.changedButUnclaimed.join(',')) || '-', log: out.logFile,

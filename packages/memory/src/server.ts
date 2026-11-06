@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { blobShas, changedPaths, DELETED, headCommit } from './git.ts'
 import { buildIndex, type Doc } from './search.ts'
+import { loadKnowledge, readKnowledge, searchKnowledge } from './knowledge.ts'
 import type { Fact, MemoryStore } from './store.ts'
 
 export type MemoryServerOptions = {
@@ -12,6 +13,7 @@ export type MemoryServerOptions = {
   repoDir: string // the target repo's working tree, for staleness and new facts
   repo: string // owner/name, whose facts this job reads and writes
   ticket: string // the ticket this run works on; facts it saves wait until its attempt passes
+  knowledge?: string[] // globs of docs the kb tools may search; none means no kb tools
   now?: () => Date
 }
 
@@ -29,7 +31,7 @@ function withStaleness<T extends Entry>(repoDir: string, entries: T[]) {
 
 const reply = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] })
 
-export function createMemoryServer({ store, repoDir, repo, ticket, now = () => new Date() }: MemoryServerOptions): McpServer {
+export function createMemoryServer({ store, repoDir, repo, ticket, knowledge = [], now = () => new Date() }: MemoryServerOptions): McpServer {
   const server = new McpServer({ name: 'factory-memory', version: '0.1.0' })
 
   server.registerTool(
@@ -106,6 +108,35 @@ export function createMemoryServer({ store, repoDir, repo, ticket, now = () => n
       return reply({ saved: true, keptOnlyIf: 'this attempt passes its tests' })
     },
   )
+
+  if (knowledge.length) {
+    const docs = loadKnowledge(repoDir, knowledge)
+    server.registerTool(
+      'kb_search',
+      {
+        description:
+          "Search this project's knowledge base (docs, ADRs, runbooks) for decisions, conventions and how-tos. Returns paths, titles and summaries; read a doc with kb_read. Stale docs were not reviewed recently or their code changed since; verify them against the code.",
+        inputSchema: { query: z.string().min(2), limit: z.number().int().min(1).max(10).optional() },
+      },
+      async ({ query, limit = 5 }) => reply(searchKnowledge(repoDir, docs, query, limit, now())),
+    )
+    server.registerTool(
+      'kb_read',
+      {
+        description: 'Read part of a knowledge-base doc found with kb_search, by line range. Read only what you need.',
+        inputSchema: {
+          path: z.string(),
+          fromLine: z.number().int().min(1).optional(),
+          lines: z.number().int().min(1).max(400).optional(),
+        },
+      },
+      async ({ path, fromLine = 1, lines = 120 }) => {
+        const doc = docs.find(d => d.path === path)
+        if (!doc) return { ...reply({ error: `not in the knowledge base: ${path}` }), isError: true }
+        return reply(readKnowledge(doc, fromLine, lines))
+      },
+    )
+  }
 
   return server
 }

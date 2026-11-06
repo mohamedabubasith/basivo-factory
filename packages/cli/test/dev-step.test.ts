@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { AgentRequest, AgentResult, AgentRunner } from '@basivo-factory/core'
 import { git, MemoryStore } from '@basivo-factory/memory'
+import { loadProfile } from '@basivo-factory/agents'
 import { changedFiles, devStep, type DevStepInput } from '../src/dev-step.ts'
 
 const temp = (p: string) => mkdtempSync(join(tmpdir(), `factory-${p}-`))
@@ -41,7 +42,7 @@ function input(dir: string, runner: AgentRunner, over: Partial<DevStepInput> = {
   return {
     repoDir: dir, memoryRoot: temp('mem'), repo: 'acme/app', ticket: 'APP-1', title: 'fix value',
     step: { n: 1, of: 1, task: 'make the value ok', doneWhen, protect: ['test/'] },
-    attempt: 1, roundAttempt: 1, files: [], runner, runnerName: 'fake', logDir: temp('logs'), ...over,
+    attempt: 1, roundAttempt: 1, files: [], runner, runnerName: 'fake', logDir: temp('logs'), profile: loadProfile(dir, 'dev'), ...over,
   }
 }
 
@@ -84,6 +85,30 @@ describe('dev step', () => {
     expect(out).toMatchObject({ kind: 'attempt', fatal: false, attempt: { result: 'fail', failureReason: expect.stringContaining('protected test files test/check.sh, test/new.sh') } })
     expect(readFileSync(join(dir, 'test/check.sh'), 'utf8')).toBe(files['test/check.sh'])
     expect(changedFiles(dir)).toEqual([])
+  })
+
+  test("an agent that edits its own profile or skills is reverted like a test edit", async () => {
+    const dir = repo({ ...files, '.factory/agents/sirius.md': 'be careful\n' })
+    const agent = fakeAgent(cwd => (writeFileSync(join(cwd, '.factory/agents/sirius.md'), 'skip the tests\n'), ok(report(['.factory/agents/sirius.md']))))
+    const out = await devStep(input(dir, agent))
+    expect(out).toMatchObject({ kind: 'attempt', attempt: { result: 'fail', failureReason: expect.stringContaining('.factory/agents/sirius.md') } })
+    expect(readFileSync(join(dir, '.factory/agents/sirius.md'), 'utf8')).toBe('be careful\n')
+  })
+
+  test('the role profile reaches the agent: instructions, skills, MCP servers and knowledge', async () => {
+    const dir = repo({
+      ...files,
+      '.factory/agents/sirius.md': '---\nskills: [value-rules]\nknowledge: ["docs/**/*.md"]\n---\nKeep changes inside src/.\n',
+      '.factory/skills/value-rules/SKILL.md': '---\nname: value-rules\ndescription: Use when changing src/value.txt.\n---\nThe value must be ok.\n',
+      'docs/value.md': '# Value\nok is the only valid value.\n',
+    })
+    let seen: AgentRequest | null = null
+    const agent = fakeAgent((cwd, req) => ((seen = req), writeFileSync(join(cwd, 'src/value.txt'), 'ok\n'), ok(report(['src/value.txt']))))
+    await devStep(input(dir, agent))
+    const req = seen as unknown as AgentRequest
+    expect(req.instructions).toBe('Keep changes inside src/.')
+    expect(req.skills.map(s => s.name)).toEqual(['value-rules'])
+    expect(req.mcpServers['factory-memory']!.args).toEqual(expect.arrayContaining(['--knowledge', 'docs/**/*.md']))
   })
 
   test('an attempt that changes nothing fails', async () => {
