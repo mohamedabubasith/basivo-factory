@@ -7,7 +7,7 @@ test('an attempt line round-trips and rejects a missing test result', () => {
     blobs: { 'server/webhooks.ts': '9f2c' }, testCommand: 'pnpm test',
     result: 'fail', failureReason: 'timeout', summary: 'added retry', at: '2026-11-06T10:00:00Z',
   }
-  expect(Attempt.parse(JSON.parse(JSON.stringify(line)))).toEqual(line)
+  expect(Attempt.parse(JSON.parse(JSON.stringify(line)))).toEqual({ ...line, signature: null, exitCode: null, notes: null, filesChanged: [] })
   expect(Attempt.safeParse({ ...line, result: undefined }).success).toBe(false)
 })
 

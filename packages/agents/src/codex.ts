@@ -1,37 +1,26 @@
 // OpenAI Codex through @openai/codex-sdk. A new thread per run; the MCP servers are passed as config.
-// Auth: ~/.codex/auth.json from a ChatGPT login (subscription) or CODEX_API_KEY / OPENAI_API_KEY.
+// Auth: CODEX_API_KEY / OPENAI_API_KEY (API billing), else auth.json from a ChatGPT login (subscription).
 // Codex has no turn or budget cap, so the wall-clock timeout is the cap, and it reports tokens, not USD.
 
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Codex, type ThreadEvent } from '@openai/codex-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
-import { parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
 
-// Each run gets an empty CODEX_HOME holding only the login, and HOME pointing at the same empty folder,
-// so the user's own config, AGENTS.md, memories and ~/.agents/skills never reach the agent. A login Codex
-// refreshes during the run is copied back, because the refresh rotates the token and the old copy would stop
-// working.
-function isolatedHome(): { env: Record<string, string>; done(): void } {
-  const realHome = process.env.CODEX_HOME ?? join(homedir(), '.codex')
-  const realAuth = join(realHome, 'auth.json')
-  const home = mkdtempSync(join(tmpdir(), 'factory-codex-'))
-  const auth = join(home, 'auth.json')
-  const before = existsSync(realAuth) ? readFileSync(realAuth, 'utf8') : null
-  if (before !== null) copyFileSync(realAuth, auth)
-  return {
-    env: { CODEX_HOME: home, HOME: home },
-    done() {
-      if (before !== null && existsSync(auth) && readFileSync(auth, 'utf8') !== before) copyFileSync(auth, realAuth)
-      rmSync(home, { recursive: true, force: true })
-    },
+// Each run gets an empty CODEX_HOME, so the user's config.toml, AGENTS.md and memories never reach the agent.
+// The login is symlinked, not copied: Codex refresh tokens are single-use, so a copy would go stale the moment
+// any run refreshed it (refresh_token_reused), and a crash before copying back would lose the new token.
+function isolatedHome(apiKey: string | undefined): { home: string; done(): void } {
+  const realAuth = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json')
+  if (!apiKey && !existsSync(realAuth)) {
+    throw new Error(`codex auth: no CODEX_API_KEY/OPENAI_API_KEY and no ${realAuth}; run \`codex login\``)
   }
+  const home = mkdtempSync(join(tmpdir(), 'factory-codex-'))
+  if (!apiKey) symlinkSync(realAuth, join(home, 'auth.json'))
+  return { home, done: () => rmSync(home, { recursive: true, force: true }) }
 }
-
-// process.env minus undefined values, as the SDK's env option takes only strings.
-const stringEnv = (): Record<string, string> =>
-  Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined))
 
 function logEvent(req: AgentRequest, ev: ThreadEvent) {
   if (ev.type !== 'item.completed') return
@@ -58,10 +47,24 @@ function logEvent(req: AgentRequest, ev: ThreadEvent) {
 export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
   return {
     async run(req: AgentRequest): Promise<AgentResult> {
-      const home = isolatedHome()
+      const usage: Usage = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, turns: null }
+      const fail = (error: string, errorClass = classifyError(error)): AgentResult => {
+        req.log.write('error', { error, errorClass })
+        return { report: null, usage, error, errorClass }
+      }
+      const apiKey = process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY
+      let isolation: ReturnType<typeof isolatedHome>
+      try {
+        isolation = isolatedHome(apiKey)
+      } catch (e) {
+        return fail(String(e), 'auth')
+      }
       const codex = new Codex({
-        env: { ...stringEnv(), ...home.env },
+        apiKey,
+        env: agentEnv({ CODEX_HOME: isolation.home }),
         config: {
+          // Skills from ~/.agents/skills would otherwise be advertised to (and read by) every run.
+          skills: { include_instructions: false },
           mcp_servers: Object.fromEntries(
             Object.entries(req.mcpServers).map(([n, s]) => [
               n,
@@ -76,10 +79,11 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
         workingDirectory: req.cwd,
         sandboxMode: req.access === 'write' ? 'workspace-write' : 'read-only',
         approvalPolicy: 'never',
+        // Same reach as the Claude runner: the agent may install packages its tests need.
+        networkAccessEnabled: true,
       })
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
-      const usage: Usage = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, turns: null }
       req.log.write('start', { runner: 'codex', model: model ?? 'default', access: req.access, briefChars: req.brief.length })
       let final = ''
       try {
@@ -97,18 +101,17 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
             })
             req.log.write('usage', usage)
           }
-          if (ev.type === 'turn.failed') throw new Error(ev.error.message)
+          if (ev.type === 'turn.failed') return fail(ev.error.message)
+          if (ev.type === 'error') return fail(ev.message)
         }
         const { report, error } = parseReport(final)
         req.log.write('result', report ?? error)
-        return { report, usage, error }
+        return { report, usage, error, errorClass: error ? 'agent' : null }
       } catch (e) {
-        const error = abort.signal.aborted ? `timed out after ${req.timeoutMs}ms` : String(e)
-        req.log.write('error', error)
-        return { report: null, usage, error }
+        return abort.signal.aborted ? fail(`timed out after ${req.timeoutMs}ms`, 'timeout') : fail(String(e))
       } finally {
         clearTimeout(timer)
-        home.done()
+        isolation.done()
       }
     },
   }

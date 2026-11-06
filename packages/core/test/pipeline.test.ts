@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { initialState, MAX_ATTEMPTS, needsJob, next, type Event, type State } from '../src/pipeline.ts'
+import { initialState, MAX_ATTEMPTS, MAX_STEPS, needsJob, next, roundAttempt, type Event, type State } from '../src/pipeline.ts'
 
 const run = (events: Event[], from: State = initialState): State => events.reduce(next, from)
 const approvedTwoSteps: Event[] = [{ type: 'intake_done' }, { type: 'plan_posted', steps: 2 }, { type: 'approved' }]
@@ -36,9 +36,18 @@ describe('pipeline', () => {
     expect(s).toMatchObject({ stage: 'dev', step: 2, attempt: 1, failures: [] })
   })
 
-  test('a human retry gives a blocked step fresh attempts', () => {
+  test('a human retry gives a new round of attempts without reusing attempt numbers', () => {
     const blocked: State = { ...initialState, stage: 'blocked', step: 2, steps: 3, attempt: 3, failures: ['a', 'b', 'c'] }
-    expect(next(blocked, { type: 'retry' })).toMatchObject({ stage: 'dev', step: 2, attempt: 1, failures: [] })
+    const retried = next(blocked, { type: 'retry' })
+    expect(retried).toMatchObject({ stage: 'dev', step: 2, attempt: 4, attemptBase: 3, failures: [] })
+    expect(roundAttempt(retried)).toEqual({ n: 1, of: MAX_ATTEMPTS })
+    const fail = (reason: string): Event[] => [{ type: 'dev_done' }, { type: 'test_failed', reason }]
+    expect(run([...fail('d'), ...fail('e'), ...fail('f')], retried)).toMatchObject({ stage: 'blocked', attempt: 6 })
+  })
+
+  test('a fatal failure blocks at once instead of spending the remaining attempts', () => {
+    const s = run([...approvedTwoSteps, { type: 'dev_done' }, { type: 'test_failed', reason: 'stuck', fatal: true }])
+    expect(s).toMatchObject({ stage: 'blocked', attempt: 1, failures: ['stuck'] })
   })
 
   test('changes requested sends the plan back with the note', () => {
@@ -49,6 +58,7 @@ describe('pipeline', () => {
   test('events out of order are refused', () => {
     expect(() => next(initialState, { type: 'approved' })).toThrow('not valid in stage intake')
     expect(() => run([{ type: 'intake_done' }, { type: 'plan_posted', steps: 0 }])).toThrow('at least one step')
+    expect(() => run([{ type: 'intake_done' }, { type: 'plan_posted', steps: MAX_STEPS + 1 }])).toThrow('split the ticket')
   })
 
   test('only working stages need a CI job', () => {

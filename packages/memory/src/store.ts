@@ -1,12 +1,14 @@
 // The memory branch, checked out at `root`:
-//   tickets/<KEY>/attempts.jsonl      one Attempt per line, written after each test stage
-//   repos/<owner>/<name>/facts.jsonl  one Fact per line: commands, conventions, pitfalls
-// One file per ticket and per repo, so parallel tickets append to different files and never conflict.
+//   tickets/<KEY>/attempts.jsonl       one Attempt per line, written after each test stage
+//   tickets/<KEY>/pending-facts.jsonl  facts an attempt saved, kept back until that attempt passes
+//   repos/<owner>/<name>/facts.jsonl   one Fact per line: commands, conventions, pitfalls
+// Attempts are per ticket. Facts are shared by every ticket on a repo, so the branch merges .jsonl files
+// line by line (see sync.ts) and two jobs appending at once both keep their lines.
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
-import { Attempt } from '@basivo-factory/core'
+import { Attempt, type AttemptInput } from '@basivo-factory/core'
 
 export const Fact = z.object({
   repo: z.string(),
@@ -14,9 +16,12 @@ export const Fact = z.object({
   body: z.string().min(1).max(2000),
   commit: z.string(),
   blobs: z.record(z.string(), z.string()),
+  // Which ticket wrote it, so a reader can weigh where the fact came from.
+  ticket: z.string().nullable().default(null),
   at: z.iso.datetime(),
 })
 export type Fact = z.infer<typeof Fact>
+export type FactInput = z.input<typeof Fact>
 
 // Keys become path segments, so anything that could climb out of the store is refused.
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -28,16 +33,23 @@ function segments(value: string, label: string, count: number): string[] {
   return parts
 }
 
-function readJsonl<T>(file: string, schema: z.ZodType<T>): T[] {
+// A bad line (a half-written append, a hand edit) is skipped and reported, so one line cannot switch off memory.
+export function readJsonl<T>(file: string, schema: z.ZodType<T>, onBadLine: (where: string, why: string) => void): T[] {
   if (!existsSync(file)) return []
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(line => line.trim() !== '')
-    .map((line, i) => {
-      const parsed = schema.safeParse(JSON.parse(line))
-      if (!parsed.success) throw new Error(`${file}:${i + 1}: ${parsed.error.message}`)
-      return parsed.data
-    })
+  const rows: T[] = []
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    if (line.trim() === '') return
+    let value: unknown
+    try {
+      value = JSON.parse(line)
+    } catch {
+      return onBadLine(`${file}:${i + 1}`, 'not JSON')
+    }
+    const parsed = schema.safeParse(value)
+    if (parsed.success) rows.push(parsed.data)
+    else onBadLine(`${file}:${i + 1}`, parsed.error.message)
+  })
+  return rows
 }
 
 function appendJsonl(file: string, value: unknown): void {
@@ -47,13 +59,21 @@ function appendJsonl(file: string, value: unknown): void {
 
 export class MemoryStore {
   readonly root: string
+  readonly badLines: string[] = []
 
   constructor(root: string) {
     this.root = root
   }
 
-  private ticketFile(ticket: string) {
-    return join(this.root, 'tickets', ...segments(ticket, 'ticket key', 1), 'attempts.jsonl')
+  private read<T>(file: string, schema: z.ZodType<T>): T[] {
+    return readJsonl(file, schema, (where, why) => {
+      this.badLines.push(where)
+      console.error(`factory-memory: skipped ${where}: ${why}`)
+    })
+  }
+
+  private ticketDir(ticket: string) {
+    return join(this.root, 'tickets', ...segments(ticket, 'ticket key', 1))
   }
 
   private repoFile(repo: string) {
@@ -61,19 +81,32 @@ export class MemoryStore {
   }
 
   attempts(ticket: string): Attempt[] {
-    return readJsonl(this.ticketFile(ticket), Attempt)
+    return this.read(join(this.ticketDir(ticket), 'attempts.jsonl'), Attempt)
   }
 
-  appendAttempt(attempt: Attempt): void {
-    appendJsonl(this.ticketFile(attempt.ticket), Attempt.parse(attempt))
+  appendAttempt(attempt: AttemptInput): void {
+    appendJsonl(join(this.ticketDir(attempt.ticket), 'attempts.jsonl'), Attempt.parse(attempt))
   }
 
   facts(repo: string): Fact[] {
-    return readJsonl(this.repoFile(repo), Fact)
+    return this.read(this.repoFile(repo), Fact)
   }
 
-  appendFact(fact: Fact): void {
+  appendFact(fact: FactInput): void {
     appendJsonl(this.repoFile(fact.repo), Fact.parse(fact))
+  }
+
+  // Facts an attempt saves wait here; only an attempt whose tests pass gets to teach later runs.
+  appendPendingFact(ticket: string, fact: FactInput): void {
+    appendJsonl(join(this.ticketDir(ticket), 'pending-facts.jsonl'), Fact.parse(fact))
+  }
+
+  settlePendingFacts(ticket: string, keep: boolean): number {
+    const file = join(this.ticketDir(ticket), 'pending-facts.jsonl')
+    const pending = this.read(file, Fact)
+    if (keep) for (const fact of pending) this.appendFact(fact)
+    rmSync(file, { force: true })
+    return keep ? pending.length : 0
   }
 
   tickets(): string[] {

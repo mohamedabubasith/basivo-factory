@@ -54,10 +54,16 @@ export type Usage = {
   turns: number | null
 }
 
+// Why a run produced no usable report. Only 'agent' failures (and failing tests) cost an attempt: a rate
+// limit, an exhausted plan, a bad login or a CLI that would not start is retried later at the same attempt.
+export type ErrorClass = 'agent' | 'timeout' | 'rate_limited' | 'quota' | 'auth' | 'startup'
+export const COUNTS_AS_ATTEMPT: ReadonlySet<ErrorClass> = new Set(['agent', 'timeout'])
+
 export type AgentResult = {
   report: AgentReport | null
   usage: Usage
   error: string | null
+  errorClass: ErrorClass | null
 }
 
 export interface AgentRunner {

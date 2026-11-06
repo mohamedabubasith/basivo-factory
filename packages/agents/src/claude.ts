@@ -1,16 +1,22 @@
 // Claude Code through the Claude Agent SDK. Every run is a fresh session: no saved transcript, no user or
-// project settings, only the MCP servers we pass. Auth: CLAUDE_CODE_OAUTH_TOKEN (subscription) or ANTHROPIC_API_KEY.
+// project settings, no skills, only the MCP servers we pass, and an environment holding one credential.
+// Auth: CLAUDE_CODE_OAUTH_TOKEN (subscription), else ANTHROPIC_API_KEY, else the local `claude` login.
 
-import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
-import { parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
 
 const READ_TOOLS = ['Read', 'Grep', 'Glob']
 const WRITE_TOOLS = ['Edit', 'Write', 'Bash']
 
 const emptyUsage = (): Usage => ({ inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, turns: null })
 
-// Logs one SDK message; returns the final result message when it is one.
+// With both set, the CLI would bill the API key; the subscription token wins and the key is dropped.
+const credential = (): Record<string, string | undefined> =>
+  process.env.CLAUDE_CODE_OAUTH_TOKEN
+    ? { CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN }
+    : { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
+
 function logMessage(req: AgentRequest, m: SDKMessage) {
   if (m.type === 'assistant') {
     for (const block of m.message.content) {
@@ -26,14 +32,34 @@ function logMessage(req: AgentRequest, m: SDKMessage) {
   }
 }
 
+// modelUsage covers every model call (main loop, subagents, compaction); `usage` is the main loop only.
+function usageOf(m: SDKResultMessage): Usage {
+  const totals = Object.values(m.modelUsage ?? {})
+  const sum = (key: 'inputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens' | 'outputTokens') =>
+    totals.reduce((n, u) => n + (u[key] ?? 0), 0)
+  return {
+    inputTokens: sum('inputTokens'),
+    cacheReadTokens: sum('cacheReadInputTokens'),
+    cacheWriteTokens: sum('cacheCreationInputTokens'),
+    outputTokens: sum('outputTokens'),
+    costUsd: m.total_cost_usd,
+    turns: m.num_turns,
+  }
+}
+
 export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
   return {
     async run(req: AgentRequest): Promise<AgentResult> {
       const tools = req.access === 'write' ? [...READ_TOOLS, ...WRITE_TOOLS] : READ_TOOLS
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
+      const stderr: string[] = []
       req.log.write('start', { runner: 'claude', model: model ?? 'default', access: req.access, briefChars: req.brief.length })
-      const usage = emptyUsage()
+      let usage = emptyUsage()
+      const fail = (error: string, errorClass = classifyError(error)): AgentResult => {
+        req.log.write('error', { error, errorClass })
+        return { report: null, usage, error, errorClass }
+      }
       try {
         for await (const m of query({
           prompt: req.brief,
@@ -45,6 +71,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
             allowedTools: [...tools, ...Object.keys(req.mcpServers).map(name => `mcp__${name}`)],
             permissionMode: 'dontAsk',
             settingSources: [],
+            skills: [],
             strictMcpConfig: true,
             persistSession: false,
             mcpServers: Object.fromEntries(Object.entries(req.mcpServers).map(([n, s]) => [n, { type: 'stdio' as const, ...s }])),
@@ -52,33 +79,27 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
             maxBudgetUsd: req.maxBudgetUsd,
             outputFormat: { type: 'json_schema', schema: reportJsonSchema() },
             abortController: abort,
-            env: { ...process.env },
+            // Startup refusals (bad login, bad config) arrive as a result with a reason instead of a bare exit 1.
+            env: agentEnv({ ...credential(), CLAUDE_CODE_STARTUP_FAILURE_RESULTS: '1' }),
+            stderr: data => void stderr.push(data),
           },
         })) {
           logMessage(req, m)
           if (m.type !== 'result') continue
-          Object.assign(usage, {
-            inputTokens: m.usage.input_tokens,
-            cacheReadTokens: m.usage.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: m.usage.cache_creation_input_tokens ?? 0,
-            outputTokens: m.usage.output_tokens,
-            costUsd: m.total_cost_usd,
-            turns: m.num_turns,
-          })
+          usage = usageOf(m)
           req.log.write('usage', usage)
-          if (m.subtype !== 'success') {
-            req.log.write('error', m.subtype)
-            return { report: null, usage, error: m.subtype }
+          if (m.subtype !== 'success' || m.is_error) {
+            const detail = ('errors' in m && m.errors?.length ? m.errors.join('; ') : '') || ('result' in m ? m.result : '') || m.subtype
+            return fail(`${m.subtype}: ${detail}`, m.subtype === 'success' ? classifyError(detail) : 'agent')
           }
           const { report, error } = parseReport(m.structured_output)
           req.log.write('result', report ?? error)
-          return { report, usage, error }
+          return { report, usage, error, errorClass: error ? 'agent' : null }
         }
-        return { report: null, usage, error: 'run ended without a result' }
+        return fail('run ended without a result')
       } catch (e) {
-        const error = abort.signal.aborted ? `timed out after ${req.timeoutMs}ms` : String(e)
-        req.log.write('error', error)
-        return { report: null, usage, error }
+        if (abort.signal.aborted) return fail(`timed out after ${req.timeoutMs}ms`, 'timeout')
+        return fail(`${String(e)}${stderr.length ? ` | stderr: ${stderr.join('').slice(-800)}` : ''}`)
       } finally {
         clearTimeout(timer)
       }

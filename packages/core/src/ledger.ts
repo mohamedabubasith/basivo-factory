@@ -20,7 +20,14 @@ export const Attempt = z.object({
   testCommand: z.string(),
   result: z.enum(['pass', 'fail']),
   failureReason: z.string().nullable(),
+  // Normalised hash of the failure (numbers, times and paths stripped). The same signature twice in a row
+  // means the agent is stuck, so the step blocks instead of spending another attempt.
+  signature: z.string().nullable().default(null),
+  exitCode: z.number().int().nullable().default(null),
   summary: z.string(),
+  notes: z.string().nullable().default(null),
+  filesChanged: z.array(z.string()).default([]),
   at: z.iso.datetime(),
 })
 export type Attempt = z.infer<typeof Attempt>
+export type AttemptInput = z.input<typeof Attempt> // what a writer passes: defaulted fields may be left out

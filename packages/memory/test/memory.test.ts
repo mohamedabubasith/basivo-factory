@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import type { Attempt } from '@basivo-factory/core'
-import { blobShas, changedPaths, git } from '../src/git.ts'
+import type { AttemptInput as Attempt } from '@basivo-factory/core'
+import { blobShas, changedPaths, DELETED, git } from '../src/git.ts'
 import { buildIndex, toFtsQuery } from '../src/search.ts'
 import { MemoryStore } from '../src/store.ts'
 import { commitAndPush } from '../src/sync.ts'
@@ -23,6 +23,15 @@ describe('staleness', () => {
     git(repo.dir, 'commit', '-q', '-m', 'drop c')
     expect(changedPaths(recorded, blobShas(repo.dir, ['a.ts', 'b.ts', 'c.ts']))).toEqual(['a.ts', 'c.ts'])
   })
+
+  test('a file recorded as deleted stays current while it is still gone, and paths with spaces work', () => {
+    const repo = repoWith({ 'my file.ts': 'x' })
+    const recorded = blobShas(repo.dir, ['my file.ts', 'gone.ts'])
+    expect(recorded).toEqual({ 'my file.ts': expect.stringMatching(/^[0-9a-f]{40}$/), 'gone.ts': DELETED })
+    expect(changedPaths(recorded, blobShas(repo.dir, ['my file.ts', 'gone.ts']))).toEqual([])
+    repo.commit({ 'gone.ts': 'back' })
+    expect(changedPaths(recorded, blobShas(repo.dir, ['my file.ts', 'gone.ts']))).toEqual(['gone.ts'])
+  })
 })
 
 describe('store', () => {
@@ -42,12 +51,24 @@ describe('store', () => {
     expect(() => store.facts('just-a-name')).toThrow('invalid repo')
   })
 
-  test('a corrupt line is reported with its file and line, not skipped', () => {
+  test('a corrupt line is skipped and reported, so the rest of memory still works', () => {
     const root = tempDir('mem')
     const store = new MemoryStore(root)
     store.appendAttempt(attempt())
-    writeFileSync(join(root, 'tickets/PROJ-12/attempts.jsonl'), `${JSON.stringify(attempt())}\n{"ticket":"PROJ-12"}\n`)
-    expect(() => store.attempts('PROJ-12')).toThrow(/attempts\.jsonl:2/)
+    writeFileSync(join(root, 'tickets/PROJ-12/attempts.jsonl'), `${JSON.stringify(attempt())}\n{"ticket":"PROJ-12"}\nnot json\n`)
+    expect(store.attempts('PROJ-12')).toHaveLength(1)
+    expect(store.badLines.map(w => w.split(':').at(-1))).toEqual(['2', '3'])
+  })
+
+  test('held-back facts reach the repo only when the attempt passes', () => {
+    const store = new MemoryStore(tempDir('mem'))
+    const fact = { repo: 'acme/shop', topic: 't', body: 'b', commit: 'c', blobs: {}, ticket: 'PROJ-12', at: '2026-11-06T00:00:00Z' }
+    store.appendPendingFact('PROJ-12', fact)
+    expect(store.facts('acme/shop')).toEqual([])
+    expect(store.settlePendingFacts('PROJ-12', false)).toBe(0)
+    store.appendPendingFact('PROJ-12', fact)
+    expect(store.settlePendingFacts('PROJ-12', true)).toBe(1)
+    expect(store.facts('acme/shop')).toEqual([fact])
   })
 })
 
@@ -90,9 +111,18 @@ describe('sync', () => {
     expect(commitAndPush(jobA, 'PROJ-1 attempt 1')).toBe(true)
     expect(commitAndPush(jobB, 'PROJ-2 attempt 1')).toBe(true) // behind jobA: rebases, then pushes
 
+    // Two tickets on the same repo appending to the one shared facts file must both survive.
+    const fact = (body: string) => ({ repo: 'acme/shop', topic: 't', body, commit: 'c', blobs: {}, ticket: null, at: '2026-11-06T00:00:00Z' })
+    for (const dir of [jobA, jobB]) git(dir, 'pull', '-q', '--rebase', 'origin', 'factory-memory')
+    new MemoryStore(jobA).appendFact(fact('from A'))
+    new MemoryStore(jobB).appendFact(fact('from B'))
+    expect(commitAndPush(jobA, 'A fact')).toBe(true)
+    expect(commitAndPush(jobB, 'B fact')).toBe(true)
+
     const check = clone('check')
     git(check, 'pull', '-q', 'origin', 'factory-memory')
     expect(new MemoryStore(check).tickets().sort()).toEqual(['PROJ-1', 'PROJ-2'])
+    expect(new MemoryStore(check).facts('acme/shop').map(f => f.body).sort()).toEqual(['from A', 'from B'])
     expect(commitAndPush(check, 'nothing')).toBe(false)
   })
 })

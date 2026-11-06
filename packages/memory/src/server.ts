@@ -3,7 +3,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { blobShas, changedPaths, headCommit } from './git.ts'
+import { blobShas, changedPaths, DELETED, headCommit } from './git.ts'
 import { buildIndex, type Doc } from './search.ts'
 import type { Fact, MemoryStore } from './store.ts'
 
@@ -11,6 +11,7 @@ export type MemoryServerOptions = {
   store: MemoryStore
   repoDir: string // the target repo's working tree, for staleness and new facts
   repo: string // owner/name, whose facts this job reads and writes
+  ticket: string // the ticket this run works on; facts it saves wait until its attempt passes
   now?: () => Date
 }
 
@@ -28,7 +29,7 @@ function withStaleness<T extends Entry>(repoDir: string, entries: T[]) {
 
 const reply = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] })
 
-export function createMemoryServer({ store, repoDir, repo, now = () => new Date() }: MemoryServerOptions): McpServer {
+export function createMemoryServer({ store, repoDir, repo, ticket, now = () => new Date() }: MemoryServerOptions): McpServer {
   const server = new McpServer({ name: 'factory-memory', version: '0.1.0' })
 
   server.registerTool(
@@ -89,7 +90,7 @@ export function createMemoryServer({ store, repoDir, repo, now = () => new Date(
     'record_fact',
     {
       description:
-        'Save something the next run should know about this repository: a command, a convention, a pitfall. Name the files it is about, so it is marked stale once they change. Keep it to one or two sentences.',
+        'Save something later runs should know about this repository: a command, a convention, a pitfall. Name the files it is about, so it is marked stale once they change. Keep it to one or two sentences. It is kept only if this attempt passes its tests.',
       inputSchema: {
         topic: z.string().min(1).max(200),
         body: z.string().min(1).max(2000),
@@ -98,11 +99,11 @@ export function createMemoryServer({ store, repoDir, repo, now = () => new Date(
     },
     async ({ topic, body, paths }) => {
       const blobs = blobShas(repoDir, paths)
-      const missing = paths.filter(p => !(p in blobs))
+      const missing = paths.filter(p => blobs[p] === DELETED)
       if (missing.length) return { ...reply({ error: `not tracked at HEAD: ${missing.join(', ')}` }), isError: true }
-      const fact: Fact = { repo, topic, body, commit: headCommit(repoDir), blobs, at: now().toISOString() }
-      store.appendFact(fact)
-      return reply({ saved: true })
+      const fact: Fact = { repo, topic, body, commit: headCommit(repoDir), blobs, ticket, at: now().toISOString() }
+      store.appendPendingFact(ticket, fact)
+      return reply({ saved: true, keptOnlyIf: 'this attempt passes its tests' })
     },
   )
 

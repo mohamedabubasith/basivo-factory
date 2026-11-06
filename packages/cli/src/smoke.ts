@@ -94,19 +94,23 @@ for (const name of runners) {
     console.error(`[${name}] attempt ${attempt}…`)
     const out = await devStep({
       repoDir, memoryRoot, repo: 'demo/cart', ticket: 'CART-7', title: 'Cart total ignores quantity',
-      step: { n: 1, of: 1, task: 'total() must charge price × qty per line and round the total to whole cents', doneWhen: 'npm test' },
-      attempt, files: ['src/cart.js', 'test/cart.test.js'], runner: runnerFor(name, modelFor(name)), runnerName: name, logDir: join(base, 'logs'),
+      step: { n: 1, of: 1, task: 'total() must charge price × qty per line and round the total to whole cents', doneWhen: 'npm test', protect: ['test/'] },
+      attempt, roundAttempt: attempt, files: ['src/cart.js', 'test/cart.test.js'], runner: runnerFor(name, modelFor(name)), runnerName: name, logDir: join(base, 'logs'),
     })
     const tools = countTools(out.logFile)
+    const result = out.kind === 'retry_later' ? `retry later (${out.reason})` : out.attempt.result
     const row = {
-      runner: name, attempt, test: out.attempt.result, agentError: out.agent.error, briefTokens: out.briefTokens,
-      ...out.agent.usage, toolCalls: tools.calls, toolErrors: tools.errors, memoryTools: tools.memory.join(',') || '-',
-      honest: out.claims?.honest ?? null, claimedButUnchanged: out.claims?.claimedButUnchanged.join(',') || '-',
-      changedButUnclaimed: out.claims?.changedButUnclaimed.join(',') || '-', log: out.logFile,
+      runner: name, attempt, test: result, fatal: out.kind === 'attempt' ? out.fatal : false,
+      failureReason: out.kind === 'attempt' ? out.attempt.failureReason : null, agentError: out.agent?.error ?? null,
+      briefTokens: out.briefTokens, ...out.agent?.usage, toolCalls: tools.calls, toolErrors: tools.errors,
+      memoryTools: tools.memory.join(',') || '-',
+      honest: out.kind === 'attempt' ? (out.claims?.honest ?? null) : null,
+      claimedButUnchanged: (out.kind === 'attempt' && out.claims?.claimedButUnchanged.join(',')) || '-',
+      changedButUnclaimed: (out.kind === 'attempt' && out.claims?.changedButUnclaimed.join(',')) || '-', log: out.logFile,
     }
     summary.push(row)
-    console.error(`[${name}] attempt ${attempt}: ${out.attempt.result}`)
-    if (out.attempt.result === 'pass') break
+    console.error(`[${name}] attempt ${attempt}: ${result}`)
+    if (out.kind === 'retry_later' || out.attempt.result === 'pass' || out.fatal) break
   }
 }
 
