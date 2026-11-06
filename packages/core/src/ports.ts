@@ -3,6 +3,7 @@
 // Core logic depends on these only, so moving from GitHub to the office GitLab swaps adapters, not code.
 
 import type { AgentReport } from './ledger.ts'
+import type { RunLog } from './log.ts'
 
 // Factory-level ticket states. Each tracker maps them to its own workflow statuses in .factory/config.yml.
 export type TicketStatus = 'in_progress' | 'awaiting_approval' | 'blocked' | 'in_review' | 'done'
@@ -39,12 +40,23 @@ export type AgentRequest = {
   access: 'read-only' | 'write'
   mcpServers: Record<string, McpServer>
   maxTurns: number
+  maxBudgetUsd: number
   timeoutMs: number
+  log: RunLog
+}
+
+export type Usage = {
+  inputTokens: number // uncached input
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  outputTokens: number
+  costUsd: number | null // Claude reports an estimate; Codex reports tokens only
+  turns: number | null
 }
 
 export type AgentResult = {
   report: AgentReport | null
-  usage: { inputTokens: number; outputTokens: number; costUsd: number | null }
+  usage: Usage
   error: string | null
 }
 

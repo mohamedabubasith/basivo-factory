@@ -6,6 +6,8 @@
     "factory": "./src/index.ts"
   },
   "dependencies": {
-    "@basivo-factory/core": "workspace:*"
+    "@basivo-factory/core": "workspace:*",
+    "@basivo-factory/agents": "workspace:*",
+    "@basivo-factory/memory": "workspace:*"
   }
 }

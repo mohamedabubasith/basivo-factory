@@ -2,7 +2,10 @@
   "name": "@basivo-factory/memory",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bin": "./src/bin.ts"
+  },
   "bin": {
     "factory-memory": "./src/bin.ts"
   },

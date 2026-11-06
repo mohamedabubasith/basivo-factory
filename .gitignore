@@ -3,3 +3,4 @@ dist/
 .factory-cache/
 *.log
 .env
+.factory-runs/
