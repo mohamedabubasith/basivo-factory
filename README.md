@@ -12,6 +12,19 @@ ticket → plan → human approval → dev → test → fix (max 3) → PR → m
 - **Engine:** CI pipelines. There is no always-on service: a ticket waiting for a human is just a status, and no runner sits idle.
 - **Memory:** every agent run starts fresh with a brief of at most 2k tokens and pulls everything else through MCP tools. That covers past attempts, project facts, similar fixes and the code graph. Entries carry git blob SHAs, so the tools flag entries about changed files as stale. Tests decide pass or fail, not the agent.
 
+## The crew
+
+Every role has a star name. Agents can run on Claude Code or Codex, chosen per stage.
+
+| Star | Role | Done by |
+|---|---|---|
+| Capella | intake: reads the ticket, sets up the repo | code |
+| Polaris | plan: splits the ticket into steps, each with a test | agent |
+| Sirius | dev: builds one step per attempt | agent |
+| Rigel | test: runs the tests and decides pass or fail | code |
+| Vega | review: reviews the change before the PR | agent |
+| Arcturus | ship: opens the PR and deploys | code |
+
 ## Status
 
 | Milestone | Scope | State |

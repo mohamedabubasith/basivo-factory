@@ -18,3 +18,10 @@ test('a failure signature ignores numbers, timings and paths but not the failure
   expect(a).toBe(b)
   expect(a).not.toBe(c)
 })
+
+test('every role has a star name, and agent labels carry the runtime', async () => {
+  const { ROLES, roleLabel } = await import('../src/roles.ts')
+  expect(Object.values(ROLES).map(r => r.star)).toEqual(['Capella', 'Polaris', 'Sirius', 'Rigel', 'Vega', 'Arcturus'])
+  expect(roleLabel('dev', 'claude')).toBe('Sirius (claude)')
+  expect(roleLabel('test')).toBe('Rigel')
+})

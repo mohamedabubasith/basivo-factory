@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { agentEnv } from '@basivo-factory/agents'
 import {
-  buildBrief, checkClaims, COUNTS_AS_ATTEMPT, estimateTokens, failureSignature, fileRunLog, MAX_ATTEMPTS,
+  buildBrief, checkClaims, COUNTS_AS_ATTEMPT, estimateTokens, failureSignature, fileRunLog, MAX_ATTEMPTS, ROLES, roleLabel,
   type AgentResult, type AgentRunner, type Attempt, type ClaimCheck,
 } from '@basivo-factory/core'
 import { blobShas, git, headCommit, MemoryStore } from '@basivo-factory/memory'
@@ -67,9 +67,10 @@ const testFailure = (t: CommandResult) =>
 
 export async function devStep(input: DevStepInput): Promise<DevStepOutcome> {
   const store = new MemoryStore(input.memoryRoot)
-  const run = `${input.ticket}-s${input.step.n}-a${input.attempt}-${input.runnerName}`
+  // e.g. APP-12-s2-a3-sirius-claude.jsonl, logged as "Sirius (claude)"
+  const run = `${input.ticket}-s${input.step.n}-a${input.attempt}-${ROLES.dev.star.toLowerCase()}-${input.runnerName}`
   const logFile = join(input.logDir, `${run}.jsonl`)
-  const log = fileRunLog(logFile, run, input.runnerName)
+  const log = fileRunLog(logFile, run, roleLabel('dev', input.runnerName))
   const testEnv = agentEnv({}) // the step's tests are agent-written code: no pipeline secrets for them either
   const runTests = () => runCommand(input.step.doneWhen, { cwd: input.repoDir, env: testEnv, timeoutMs: TEST_TIMEOUT_MS })
   const base = headCommit(input.repoDir)
