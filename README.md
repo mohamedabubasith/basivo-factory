@@ -17,8 +17,8 @@ ticket → plan → human approval → dev → test → fix (max 3) → PR → m
 | Milestone | Scope | State |
 |---|---|---|
 | M0 | Monorepo, ports, stage machine with the 3-attempt cap, brief builder, CLI, CI | done |
-| M1 | Memory branch store, FTS index, staleness, MCP server, code graph | next |
-| M2 | AgentRunner for Claude Code and Codex: brief, MCP, caps, structured ledger | |
+| M1 | Memory branch store, FTS index, staleness, MCP server (code graph wiring pending approval) | done |
+| M2 | AgentRunner for Claude Code and Codex: brief, MCP, caps, structured ledger | next |
 | M3 | GitHub forge, Jira tracker, `factory.yml`, the full stage loop | |
 | M4 | Teams approval card, Vercel deploy, setup docs | |
 | M5 | GitLab, YouTrack, native projects, API-key auth | |
