@@ -2,7 +2,9 @@
 // Tracker (Jira, YouTrack, native), Forge (GitHub, GitLab), AgentRunner (Claude Code, Codex).
 // Core logic depends on these only, so moving from GitHub to the office GitLab swaps adapters, not code.
 
+import type { z } from 'zod'
 import type { AgentReport } from './ledger.ts'
+import type { Role } from './roles.ts'
 import type { RunLog } from './log.ts'
 
 // Factory-level ticket states. Each tracker maps them to its own workflow statuses in .factory/config.yml.
@@ -37,7 +39,10 @@ export type McpServer = { command: string; args: string[]; env?: Record<string, 
 // plus optional scripts/ and references/. Only name and description reach the prompt; the agent loads the rest.
 export type SkillRef = { name: string; description: string; dir: string }
 
-export type AgentRequest = {
+// T is what the agent must hand back: the dev report by default, a plan for Polaris, a review for Vega.
+export type AgentRequest<T = AgentReport> = {
+  role: Role // picks the base prompt; the profile's instructions are added after it
+  output: z.ZodType<T>
   brief: string
   cwd: string
   instructions: string // the role's own prompt from .factory/agents/<star>.md, added after the base prompt
@@ -65,13 +70,13 @@ export type Usage = {
 export type ErrorClass = 'agent' | 'timeout' | 'rate_limited' | 'quota' | 'auth' | 'startup'
 export const COUNTS_AS_ATTEMPT: ReadonlySet<ErrorClass> = new Set(['agent', 'timeout'])
 
-export type AgentResult = {
-  report: AgentReport | null
+export type AgentResult<T = AgentReport> = {
+  report: T | null
   usage: Usage
   error: string | null
   errorClass: ErrorClass | null
 }
 
 export interface AgentRunner {
-  run(request: AgentRequest): Promise<AgentResult>
+  run<T>(request: AgentRequest<T>): Promise<AgentResult<T>>
 }

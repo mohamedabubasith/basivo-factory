@@ -1,0 +1,81 @@
+# The whole pipeline for one ticket, as a job graph you can watch in the Actions tab:
+#   Capella (intake) → Polaris (plan) → approval gate → Sirius (dev; Rigel tests each attempt) → Vega (review) → Arcturus (ship)
+# A target repo calls it from its own workflow (templates/github/factory.yml).
+name: pipeline
+on:
+  workflow_call:
+    inputs:
+      ticket:
+        description: Issue number of the ticket
+        required: true
+        type: string
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  FACTORY_BASE_BRANCH: ${{ github.event.repository.default_branch }}
+  CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  FACTORY: node _factory/packages/cli/src/index.ts stage
+
+jobs:
+  capella:
+    name: Capella · intake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - run: $FACTORY intake --ticket ${{ inputs.ticket }}
+
+  polaris:
+    name: Polaris · plan
+    needs: capella
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - run: $FACTORY plan --ticket ${{ inputs.ticket }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: logs-polaris, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
+
+  approval:
+    name: Approve the plan
+    needs: polaris
+    runs-on: ubuntu-latest
+    environment: factory-approval # required reviewers: the run waits here for a person
+    steps:
+      - run: echo "Plan for ticket ${{ inputs.ticket }} approved."
+
+  sirius:
+    name: Sirius · dev (Rigel tests)
+    needs: approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - run: $FACTORY dev --ticket ${{ inputs.ticket }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: logs-sirius, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
+
+  vega:
+    name: Vega · review
+    needs: sirius
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - run: $FACTORY review --ticket ${{ inputs.ticket }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with: { name: logs-vega, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
+
+  arcturus:
+    name: Arcturus · ship
+    needs: vega
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - run: $FACTORY ship --ticket ${{ inputs.ticket }}

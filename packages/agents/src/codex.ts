@@ -7,7 +7,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Codex, type ThreadEvent } from '@openai/codex-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
-import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { agentEnv, basePrompt, classifyError, outputJsonSchema, parseOutput } from './common.ts'
 import { codexSkillConfig } from './skills.ts'
 
 // Each run gets an empty CODEX_HOME, so the user's config.toml, AGENTS.md and memories never reach the agent.
@@ -23,7 +23,7 @@ function isolatedHome(apiKey: string | undefined): { home: string; done(): void 
   return { home, done: () => rmSync(home, { recursive: true, force: true }) }
 }
 
-function logEvent(req: AgentRequest, ev: ThreadEvent) {
+function logEvent(req: AgentRequest<unknown>, ev: ThreadEvent) {
   if (ev.type !== 'item.completed') return
   const item = ev.item
   switch (item.type) {
@@ -47,9 +47,9 @@ function logEvent(req: AgentRequest, ev: ThreadEvent) {
 
 export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
   return {
-    async run(req: AgentRequest): Promise<AgentResult> {
+    async run<T>(req: AgentRequest<T>): Promise<AgentResult<T>> {
       const usage: Usage = { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, costUsd: null, turns: null }
-      const fail = (error: string, errorClass = classifyError(error)): AgentResult => {
+      const fail = (error: string, errorClass = classifyError(error)): AgentResult<T> => {
         req.log.write('error', { error, errorClass })
         return { report: null, usage, error, errorClass }
       }
@@ -86,10 +86,10 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
       })
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
-      req.log.write('start', { runner: 'codex', model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
+      req.log.write('start', { runner: 'codex', role: req.role, model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
       let final = ''
       try {
-        const { events } = await thread.runStreamed(`${SYSTEM_PROMPT}\n\n${req.brief}`, { outputSchema: reportJsonSchema(), signal: abort.signal })
+        const { events } = await thread.runStreamed(`${basePrompt(req.role)}\n\n${req.brief}`, { outputSchema: outputJsonSchema(req.output), signal: abort.signal })
         for await (const ev of events) {
           logEvent(req, ev)
           if (ev.type === 'item.completed' && ev.item.type === 'agent_message') final = ev.item.text
@@ -106,7 +106,7 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
           if (ev.type === 'turn.failed') return fail(ev.error.message)
           if (ev.type === 'error') return fail(ev.message)
         }
-        const { report, error } = parseReport(final)
+        const { report, error } = parseOutput(req.output, final)
         req.log.write('result', report ?? error)
         return { report, usage, error, errorClass: error ? 'agent' : null }
       } catch (e) {

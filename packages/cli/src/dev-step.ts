@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { agentEnv, type RoleProfile } from '@basivo-factory/agents'
 import {
   buildBrief, checkClaims, COUNTS_AS_ATTEMPT, estimateTokens, failureSignature, fileRunLog, MAX_ATTEMPTS, ROLES, roleLabel,
-  type AgentResult, type AgentRunner, type Attempt, type ClaimCheck,
+  AgentReport, type AgentResult, type AgentRunner, type Attempt, type ClaimCheck,
 } from '@basivo-factory/core'
 import { blobShas, git, headCommit, MemoryStore } from '@basivo-factory/memory'
 import { runCommand, type CommandResult } from './run-command.ts'
@@ -109,7 +109,7 @@ export async function devStep(input: DevStepInput): Promise<DevStepOutcome> {
   const { profile } = input
   const memoryArgs = [MEMORY_BIN, '--root', input.memoryRoot, '--repo-dir', input.repoDir, '--repo', input.repo, '--ticket', input.ticket]
   const agent = await input.runner.run({
-    brief, cwd: input.repoDir, access: 'write', log,
+    role: 'dev', output: AgentReport, brief, cwd: input.repoDir, access: 'write', log,
     instructions: profile.instructions,
     skills: profile.skillRefs,
     mcpServers: {

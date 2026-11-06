@@ -34,7 +34,13 @@ const ok = (r: AgentResult['report']): AgentResult => ({
 
 // A scripted stand-in for Claude or Codex: does `act` in the repo and returns `result`.
 function fakeAgent(act: (cwd: string, req: AgentRequest) => AgentResult): AgentRunner & { calls: number } {
-  const runner = { calls: 0, async run(req: AgentRequest) { runner.calls++; return act(req.cwd, req) } }
+  const runner = {
+    calls: 0,
+    async run<T>(req: AgentRequest<T>) {
+      runner.calls++
+      return act(req.cwd, req as unknown as AgentRequest) as unknown as AgentResult<T>
+    },
+  }
   return runner
 }
 

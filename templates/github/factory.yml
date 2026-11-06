@@ -1,0 +1,21 @@
+# Copy to .github/workflows/factory.yml in a target repo. Label an issue "factory" to start the pipeline.
+name: factory
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: factory-${{ github.event.issue.number }}
+
+jobs:
+  pipeline:
+    if: github.event.label.name == 'factory'
+    uses: mohamedabubasith/basivo-factory/.github/workflows/pipeline.yml@main
+    with:
+      ticket: ${{ github.event.issue.number }}
+    secrets: inherit

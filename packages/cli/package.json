@@ -8,6 +8,7 @@
   "dependencies": {
     "@basivo-factory/core": "workspace:*",
     "@basivo-factory/agents": "workspace:*",
-    "@basivo-factory/memory": "workspace:*"
+    "@basivo-factory/memory": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

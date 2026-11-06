@@ -1,0 +1,25 @@
+name: basivo-factory setup
+description: Checks out the target repo and basivo-factory, and installs the factory CLI.
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0 # agents diff against the base branch and the memory branch is fetched
+    - uses: actions/checkout@v7
+      with:
+        repository: mohamedabubasith/basivo-factory
+        ref: main
+        path: _factory
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+    - shell: bash
+      run: |
+        # The factory's own checkout must not count as a change the agent made.
+        echo "_factory/" >> .git/info/exclude
+        git config --global user.name "basivo-factory"
+        git config --global user.email "factory@users.noreply.github.com"
+        cd _factory && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
+        echo "FACTORY_MEMORY_DIR=$RUNNER_TEMP/factory-memory" >> "$GITHUB_ENV"
+        echo "FACTORY_LOG_DIR=$RUNNER_TEMP/factory-logs" >> "$GITHUB_ENV"

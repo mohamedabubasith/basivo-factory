@@ -5,7 +5,7 @@
 // Attempts are per ticket. Facts are shared by every ticket on a repo, so the branch merges .jsonl files
 // line by line (see sync.ts) and two jobs appending at once both keep their lines.
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { Attempt, type AttemptInput } from '@basivo-factory/core'
@@ -22,6 +22,27 @@ export const Fact = z.object({
 })
 export type Fact = z.infer<typeof Fact>
 export type FactInput = z.input<typeof Fact>
+
+// One line per agent run in tickets/<KEY>/usage.jsonl: the numbers behind the end-of-ticket report.
+export const UsageRow = z.object({
+  stage: z.string(),
+  star: z.string(),
+  runtime: z.string(),
+  step: z.number().int().nullable(),
+  attempt: z.number().int().nullable(),
+  result: z.string(),
+  inputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  cacheWriteTokens: z.number(),
+  outputTokens: z.number(),
+  costUsd: z.number().nullable(),
+  turns: z.number().nullable(),
+  toolCalls: z.number(),
+  toolErrors: z.number(),
+  honest: z.boolean().nullable(), // did its claimed files match git? null when it made no claim
+  at: z.iso.datetime(),
+})
+export type UsageRow = z.infer<typeof UsageRow>
 
 // Keys become path segments, so anything that could climb out of the store is refused.
 const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -107,6 +128,26 @@ export class MemoryStore {
     if (keep) for (const fact of pending) this.appendFact(fact)
     rmSync(file, { force: true })
     return keep ? pending.length : 0
+  }
+
+  appendUsage(ticket: string, row: UsageRow): void {
+    appendJsonl(join(this.ticketDir(ticket), 'usage.jsonl'), UsageRow.parse(row))
+  }
+
+  usage(ticket: string): UsageRow[] {
+    return this.read(join(this.ticketDir(ticket), 'usage.jsonl'), UsageRow)
+  }
+
+  // Whole-document state of a ticket (ticket.json, plan.json, review.json), passed from one CI job to the next.
+  writeDoc(ticket: string, name: string, value: unknown): void {
+    mkdirSync(this.ticketDir(ticket), { recursive: true })
+    writeFileSync(join(this.ticketDir(ticket), `${segments(name, 'doc name', 1)[0]}.json`), `${JSON.stringify(value, null, 2)}\n`)
+  }
+
+  readDoc<T>(ticket: string, name: string, schema: z.ZodType<T>): T {
+    const file = join(this.ticketDir(ticket), `${segments(name, 'doc name', 1)[0]}.json`)
+    if (!existsSync(file)) throw new Error(`${ticket}: no ${name}.json in memory yet`)
+    return schema.parse(JSON.parse(readFileSync(file, 'utf8')))
   }
 
   tickets(): string[] {

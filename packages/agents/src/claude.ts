@@ -4,7 +4,7 @@
 
 import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk'
 import { preview, type AgentRequest, type AgentResult, type AgentRunner, type Usage } from '@basivo-factory/core'
-import { agentEnv, classifyError, parseReport, reportJsonSchema, SYSTEM_PROMPT } from './common.ts'
+import { agentEnv, basePrompt, classifyError, outputJsonSchema, parseOutput } from './common.ts'
 import { claudeSkillPlugin } from './skills.ts'
 
 const READ_TOOLS = ['Read', 'Grep', 'Glob']
@@ -18,7 +18,7 @@ const credential = (): Record<string, string | undefined> =>
     ? { CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN }
     : { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY }
 
-function logMessage(req: AgentRequest, m: SDKMessage) {
+function logMessage(req: AgentRequest<unknown>, m: SDKMessage) {
   if (m.type === 'assistant') {
     for (const block of m.message.content) {
       if (block.type === 'text') req.log.write('text', block.text)
@@ -50,16 +50,16 @@ function usageOf(m: SDKResultMessage): Usage {
 
 export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
   return {
-    async run(req: AgentRequest): Promise<AgentResult> {
+    async run<T>(req: AgentRequest<T>): Promise<AgentResult<T>> {
       const plugin = claudeSkillPlugin(req.skills)
       // The Skill tool is what lets the agent open a skill's body; without it the skills are invisible.
       const tools = [...READ_TOOLS, ...(req.access === 'write' ? WRITE_TOOLS : []), ...(plugin ? ['Skill'] : [])]
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
       const stderr: string[] = []
-      req.log.write('start', { runner: 'claude', model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
+      req.log.write('start', { runner: 'claude', role: req.role, model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
       let usage = emptyUsage()
-      const fail = (error: string, errorClass = classifyError(error)): AgentResult => {
+      const fail = (error: string, errorClass = classifyError(error)): AgentResult<T> => {
         req.log.write('error', { error, errorClass })
         return { report: null, usage, error, errorClass }
       }
@@ -69,7 +69,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
           options: {
             cwd: req.cwd,
             model,
-            systemPrompt: req.instructions ? [SYSTEM_PROMPT, req.instructions] : SYSTEM_PROMPT,
+            systemPrompt: req.instructions ? [basePrompt(req.role), req.instructions] : basePrompt(req.role),
             tools,
             allowedTools: [...tools, ...Object.keys(req.mcpServers).map(name => `mcp__${name}`)],
             permissionMode: 'dontAsk',
@@ -81,7 +81,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
             mcpServers: Object.fromEntries(Object.entries(req.mcpServers).map(([n, s]) => [n, { type: 'stdio' as const, ...s }])),
             maxTurns: req.maxTurns,
             maxBudgetUsd: req.maxBudgetUsd,
-            outputFormat: { type: 'json_schema', schema: reportJsonSchema() },
+            outputFormat: { type: 'json_schema', schema: outputJsonSchema(req.output) },
             abortController: abort,
             // Startup refusals (bad login, bad config) arrive as a result with a reason instead of a bare exit 1.
             env: agentEnv({ ...credential(), CLAUDE_CODE_STARTUP_FAILURE_RESULTS: '1' }),
@@ -96,7 +96,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
             const detail = ('errors' in m && m.errors?.length ? m.errors.join('; ') : '') || ('result' in m ? m.result : '') || m.subtype
             return fail(`${m.subtype}: ${detail}`, m.subtype === 'success' ? classifyError(detail) : 'agent')
           }
-          const { report, error } = parseReport(m.structured_output)
+          const { report, error } = parseOutput(req.output, m.structured_output)
           req.log.write('result', report ?? error)
           return { report, usage, error, errorClass: error ? 'agent' : null }
         }
