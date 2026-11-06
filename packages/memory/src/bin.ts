@@ -1,0 +1,17 @@
+#!/usr/bin/env node
+// stdio entry point that Claude Code and Codex start as an MCP server.
+import { parseArgs } from 'node:util'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { createMemoryServer } from './server.ts'
+import { MemoryStore } from './store.ts'
+
+const { values } = parseArgs({
+  options: { root: { type: 'string' }, 'repo-dir': { type: 'string' }, repo: { type: 'string' } },
+})
+if (!values.root || !values['repo-dir'] || !values.repo) {
+  console.error('usage: factory-memory --root <memory branch dir> --repo-dir <repo dir> --repo <owner/name>')
+  process.exit(1)
+}
+
+const server = createMemoryServer({ store: new MemoryStore(values.root), repoDir: values['repo-dir'], repo: values.repo })
+await server.connect(new StdioServerTransport())

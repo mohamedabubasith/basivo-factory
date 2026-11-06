@@ -1,0 +1,14 @@
+{
+  "name": "@basivo-factory/memory",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "bin": {
+    "factory-memory": "./src/bin.ts"
+  },
+  "dependencies": {
+    "@basivo-factory/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}
