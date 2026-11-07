@@ -1,0 +1,31 @@
+# Publishes the dashboard image that deploy/docker-compose.yml runs:
+#   ghcr.io/mohamedabubasith/basivo-factory-dashboard:latest   and   :<commit sha>
+name: dashboard-image
+on:
+  push:
+    branches: [main]
+    paths: [apps/dashboard/**, packages/core/**, packages/trackers/**, pnpm-lock.yaml, .github/workflows/dashboard-image.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/basivo-factory-dashboard:latest
+            ghcr.io/${{ github.repository_owner }}/basivo-factory-dashboard:${{ github.sha }}

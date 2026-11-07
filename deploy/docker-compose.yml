@@ -1,0 +1,41 @@
+# basivo-factory dashboard + its own Postgres, for any Docker host (office server, VM, Coolify, Portainer).
+#   cp .env.example .env   # fill it in
+#   docker compose up -d
+# The database is reachable only by the dashboard (internal network, no published port).
+name: basivo-factory
+
+services:
+  dashboard:
+    image: ghcr.io/mohamedabubasith/basivo-factory-dashboard:latest
+    build:
+      context: ..
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://factory:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/factory
+      FACTORY_SECRET: ${FACTORY_SECRET:?set FACTORY_SECRET in .env}
+      ADMIN_GITHUB_LOGINS: ${ADMIN_GITHUB_LOGINS:?set ADMIN_GITHUB_LOGINS in .env}
+      APP_URL: ${APP_URL:?set APP_URL in .env}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factory
+      POSTGRES_DB: factory
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  db-data:
