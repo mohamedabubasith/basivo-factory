@@ -13,7 +13,6 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 NEXT_TELEMETRY_DISABLED=1
 COPY --from=build --chown=node:node /repo/apps/dashboard/.next/standalone ./
 COPY --from=build --chown=node:node /repo/apps/dashboard/.next/static ./apps/dashboard/.next/static
-COPY --from=build --chown=node:node /repo/apps/dashboard/public ./apps/dashboard/public
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:3000/setup >/dev/null 2>&1 || exit 1
