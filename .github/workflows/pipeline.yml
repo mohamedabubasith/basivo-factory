@@ -28,12 +28,24 @@ on:
         required: false
         type: string
         default: ''
+      runs_on:
+        description: Runner label for every job (ubuntu-latest, instabox-medium, self-hosted, ...)
+        required: false
+        type: string
+        default: ubuntu-latest
+      dashboard_url:
+        description: basivo-factory dashboard that receives live progress (empty for none)
+        required: false
+        type: string
+        default: ''
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
       ANTHROPIC_API_KEY:
         required: false
       JIRA_API_TOKEN:
+        required: false
+      FACTORY_INGEST_TOKEN:
         required: false
 
 env:
@@ -44,6 +56,9 @@ env:
   JIRA_BASE_URL: ${{ inputs.jira_url }}
   JIRA_EMAIL: ${{ inputs.jira_email }}
   JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+  FACTORY_DASHBOARD_URL: ${{ inputs.dashboard_url }}
+  FACTORY_INGEST_TOKEN: ${{ secrets.FACTORY_INGEST_TOKEN }}
+  FACTORY_RUN: ${{ inputs.run }}
   # The ticket can come from outside (a Jira web request): it reaches the shell only as a quoted variable,
   # never pasted into a script, and the CLI rejects anything that is not an issue number or a Jira key.
   TICKET: ${{ inputs.ticket }}
@@ -53,7 +68,7 @@ jobs:
   capella:
     name: Capella · intake
     if: inputs.run != 'build'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
       - run: $FACTORY intake --ticket "$TICKET"
@@ -61,7 +76,7 @@ jobs:
   polaris:
     name: Polaris · plan
     needs: capella
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
       - run: $FACTORY plan --ticket "$TICKET"
@@ -73,7 +88,7 @@ jobs:
     name: Approve the plan
     needs: polaris
     if: inputs.run == 'all'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     environment: factory-approval # required reviewers: the run waits here for a person
     steps:
       - run: echo "Plan approved."
@@ -83,7 +98,7 @@ jobs:
     needs: approval
     # build: runs on its own (approval and plan jobs are skipped); all: only after the gate passed.
     if: always() && (inputs.run == 'build' || (inputs.run == 'all' && needs.approval.result == 'success'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 120
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
@@ -96,7 +111,7 @@ jobs:
     name: Vega · review
     needs: sirius
     if: always() && needs.sirius.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
       - run: $FACTORY review --ticket "$TICKET"
@@ -108,7 +123,7 @@ jobs:
     name: Arcturus · ship
     needs: vega
     if: always() && needs.vega.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on }}
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
       - run: $FACTORY ship --ticket "$TICKET"

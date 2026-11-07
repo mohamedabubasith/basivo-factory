@@ -1,0 +1,9 @@
+{
+  "name": "@basivo-factory/trackers",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@basivo-factory/core": "workspace:*"
+  }
+}

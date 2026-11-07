@@ -1,0 +1,42 @@
+// The workflow the dashboard adds to a linked repo. Kept identical to templates/github/factory-jira.yml
+// (a test compares them), so people setting a repo up by hand get the same file.
+export const FACTORY_WORKFLOW_PATH = '.github/workflows/factory.yml'
+
+export const FACTORY_WORKFLOW = `# .github/workflows/factory.yml in a repo whose tickets live in Jira. The basivo-factory dashboard adds this
+# file and starts it when a ticket moves to the start column ("plan") or gets the approve comment ("build").
+# You can also start it by hand from the Actions tab.
+name: factory
+run-name: \${{ inputs.ticket }} · \${{ inputs.run }}
+on:
+  workflow_dispatch:
+    inputs:
+      ticket:
+        description: Jira key, for example BL-7
+        required: true
+      run:
+        description: Which part to run
+        type: choice
+        options: [plan, build]
+        default: plan
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+# One run per ticket at a time; a second trigger waits for the first.
+concurrency:
+  group: factory-\${{ inputs.ticket }}
+
+jobs:
+  pipeline:
+    uses: mohamedabubasith/basivo-factory/.github/workflows/pipeline.yml@main
+    with:
+      ticket: \${{ inputs.ticket }}
+      run: \${{ inputs.run }}
+      jira_url: \${{ vars.JIRA_BASE_URL }}
+      jira_email: \${{ vars.JIRA_EMAIL }}
+      runs_on: \${{ vars.FACTORY_RUNS_ON || 'ubuntu-latest' }}
+      dashboard_url: \${{ vars.FACTORY_DASHBOARD_URL }}
+    secrets: inherit
+`

@@ -38,6 +38,23 @@ export function usageTable(rows: UsageRow[]): string {
   return [head, ...body, total].join('\n')
 }
 
+// Live progress for the dashboard. Only when the workflow passes FACTORY_DASHBOARD_URL and FACTORY_INGEST_TOKEN;
+// a slow or broken dashboard never slows or fails a run (5 s limit, errors ignored).
+export async function emit(ticket: string, kind: string, data: Record<string, unknown> = {}): Promise<void> {
+  const { FACTORY_DASHBOARD_URL: url, FACTORY_INGEST_TOKEN: token, GITHUB_RUN_ID: runId } = process.env
+  if (!url || !token || !runId) return
+  try {
+    await fetch(`${url.replace(/\/+$/, '')}/api/ingest`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ticket, run: process.env.FACTORY_RUN ?? 'all', ghRunId: Number(runId), kind, data, at: new Date().toISOString() }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // progress is best effort
+  }
+}
+
 // The Actions run page shows this under each job.
 export function jobSummary(markdown: string): void {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${markdown}\n\n`)

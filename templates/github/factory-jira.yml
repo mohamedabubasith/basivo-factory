@@ -1,11 +1,8 @@
-# Copy to .github/workflows/factory.yml in a target repo whose tickets live in Jira.
-# Jira Automation starts it with a web request (see docs/ARCHITECTURE.md, "Setup"):
-#   POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/factory.yml/dispatches
-#   {"ref": "main", "inputs": {"ticket": "{{issue.key}}", "run": "plan"}}     ticket moved to Selected for Development
-#   {"ref": "main", "inputs": {"ticket": "{{issue.key}}", "run": "build"}}    "/approve" comment
-# The token Jira uses only needs "Actions: read and write" on this one repo: it can start this workflow,
-# not change code. You can also start it by hand from the Actions tab.
+# .github/workflows/factory.yml in a repo whose tickets live in Jira. The basivo-factory dashboard adds this
+# file and starts it when a ticket moves to the start column ("plan") or gets the approve comment ("build").
+# You can also start it by hand from the Actions tab.
 name: factory
+run-name: ${{ inputs.ticket }} · ${{ inputs.run }}
 on:
   workflow_dispatch:
     inputs:
@@ -35,4 +32,6 @@ jobs:
       run: ${{ inputs.run }}
       jira_url: ${{ vars.JIRA_BASE_URL }}
       jira_email: ${{ vars.JIRA_EMAIL }}
+      runs_on: ${{ vars.FACTORY_RUNS_ON || 'ubuntu-latest' }}
+      dashboard_url: ${{ vars.FACTORY_DASHBOARD_URL }}
     secrets: inherit

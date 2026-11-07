@@ -6,7 +6,8 @@ import { parseArgs } from 'node:util'
 import { initialState, needsJob, next, type Event, type State } from '@basivo-factory/core'
 import { git } from '@basivo-factory/memory'
 import { github } from './github.ts'
-import { jira, JIRA_KEY } from './jira.ts'
+import { jira, JIRA_KEY } from '@basivo-factory/trackers'
+import { emit } from './report.ts'
 import { openMemory, STAGES } from './stages.ts'
 
 const USAGE = `usage:
@@ -54,7 +55,15 @@ if (command === 'next' && values.state && values.event) {
     // The workflow passes the repo's default branch; a plain clone falls back to origin/HEAD.
     baseBranch: process.env.FACTORY_BASE_BRANCH ?? git(repoDir, 'rev-parse', '--abbrev-ref', 'origin/HEAD').replace(/^origin\//, ''),
   }
-  await STAGES[name as keyof typeof STAGES](ctx, openMemory(repoDir, memoryDir))
+  const store = openMemory(repoDir, memoryDir)
+  await emit(ctx.key, 'stage_started', { stage: name })
+  try {
+    await STAGES[name as keyof typeof STAGES](ctx, store)
+  } catch (e) {
+    await emit(ctx.key, 'stage_failed', { stage: name, error: String((e as Error).message ?? e).slice(0, 500), usage: store.usage(ctx.key) })
+    throw e
+  }
+  await emit(ctx.key, 'stage_finished', { stage: name, usage: store.usage(ctx.key) })
 } else {
   console.error(USAGE)
   process.exit(1)

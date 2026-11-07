@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { devStep } from './dev-step.ts'
 import type { Tracker } from '@basivo-factory/core'
 import type { GitHub } from './github.ts'
-import { jobSummary, usageRow, usageTable } from './report.ts'
+import { emit, jobSummary, usageRow, usageTable } from './report.ts'
 
 const MEMORY_BIN = fileURLToPath(import.meta.resolve('@basivo-factory/memory/bin'))
 const MEMORY_BRANCH = 'factory-memory'
@@ -115,6 +115,7 @@ export async function plan(ctx: StageContext, store: MemoryStore) {
   const steps = p.steps.map((s, i) => `${i + 1}. ${s.task}\n   - done when: \`${s.doneWhen}\`${s.protect.length ? `\n   - must not edit: ${s.protect.map(f => `\`${f}\``).join(', ')}` : ''}`).join('\n')
   await ctx.tracker.comment(ctx.key, `**Polaris** planned this ticket in ${p.steps.length} step${p.steps.length === 1 ? '' : 's'}.\n\n${p.summary}\n\n${steps}\n\n${ctx.approveHint}`)
   await ctx.tracker.transition(ctx.key, 'awaiting_approval')
+  await emit(ctx.key, 'plan_posted', { summary: p.summary, steps: p.steps.map(s => ({ task: s.task, doneWhen: s.doneWhen })) })
   jobSummary(`### Polaris (plan)\n${p.summary}\n\n${steps}\n\n${usageTable(store.usage(ctx.key).filter(r => r.stage === 'plan'))}`)
 }
 
@@ -156,6 +157,7 @@ export async function dev(ctx: StageContext, store: MemoryStore) {
     store.appendUsage(ctx.key, usageRow({ stage: 'dev', star: 'Sirius', runtime: profile.runtime, step: a.step, attempt: a.attempt, result: a.result, agent: out.agent, logFile: out.logFile, honest: out.claims?.honest ?? null }))
     save(ctx, `step ${a.step} attempt ${a.attempt} ${a.result}`)
     if (a.result === 'pass') git(ctx.repoDir, 'push', '-q', '-u', 'origin', `HEAD:refs/heads/${branch}`)
+    await emit(ctx.key, 'attempt', { step: a.step, of: p.steps.length, attempt: a.attempt, result: a.result, failureReason: a.failureReason?.slice(0, 500) ?? null, honest: out.claims?.honest ?? null })
     console.log(`Sirius step ${a.step} attempt ${a.attempt}: ${a.result}${a.failureReason ? ` (${a.failureReason.slice(0, 200)})` : ''}`)
     state = next(next(state, { type: 'dev_done' }), a.result === 'pass' ? { type: 'test_passed' } : { type: 'test_failed', reason: a.failureReason ?? 'failed', fatal: out.fatal })
   }
@@ -196,6 +198,7 @@ export async function review(ctx: StageContext, store: MemoryStore) {
   }
   store.writeDoc(ctx.key, 'review', agent.report)
   save(ctx, `review ${agent.report.verdict}`)
+  await emit(ctx.key, 'review', { verdict: agent.report.verdict, summary: agent.report.summary, findings: agent.report.findings.length })
   jobSummary(`### Vega (review): ${agent.report.verdict}\n${agent.report.summary}\n\n${findingsList(agent.report)}`)
 }
 
@@ -222,6 +225,7 @@ export async function ship(ctx: StageContext, store: MemoryStore) {
   ].join('\n\n')
   const pr = await ctx.forge.openPullRequest({ head: branchFor(ctx.key), base: ctx.baseBranch, title: `${ticket.title} (${ctx.key})`, body })
   await ctx.tracker.transition(ctx.key, 'in_review')
+  await emit(ctx.key, 'pr_opened', { url: pr.url, number: pr.number })
   await ctx.tracker.comment(ctx.key, `**Arcturus** opened ${pr.url}. Vega's verdict: **${r.verdict}**. ${rows.length} agent runs, $${rows.reduce((t, x) => t + (x.costUsd ?? 0), 0).toFixed(2)} estimated.`)
   jobSummary(`### Arcturus (ship)\n[Pull request #${pr.number}](${pr.url})\n\n${usageTable(rows)}`)
 }

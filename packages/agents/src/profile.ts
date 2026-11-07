@@ -8,21 +8,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { z } from 'zod'
-import { ROLES, splitFrontmatter, type McpServer, type Role, type SkillRef } from '@basivo-factory/core'
+import { MAX_INSTRUCTIONS_CHARS, MAX_SKILLS, ProfileSettings, ROLES, SKILL_NAME, splitFrontmatter, type McpServer, type Role, type SkillRef } from '@basivo-factory/core'
 
-// Pushed into every run of the role, so kept small; longer material belongs in a skill or the knowledge base.
-export const MAX_INSTRUCTIONS_CHARS = 6000
-export const MAX_SKILLS = 8
-
-const Frontmatter = z.object({
-  runtime: z.enum(['claude', 'codex']).default('claude'),
-  model: z.string().optional(),
-  mcp: z.array(z.string()).default([]),
-  skills: z.array(z.string()).default([]),
-  knowledge: z.array(z.string()).default([]), // globs, relative to the repo, the knowledge tools may search
-  maxTurns: z.number().int().positive().optional(),
-  maxBudgetUsd: z.number().positive().optional(),
-})
+export { MAX_INSTRUCTIONS_CHARS, MAX_SKILLS } from '@basivo-factory/core'
+const Frontmatter = ProfileSettings
 
 export type RoleProfile = z.infer<typeof Frontmatter> & {
   role: Role
@@ -31,9 +20,6 @@ export type RoleProfile = z.infer<typeof Frontmatter> & {
   skillRefs: SkillRef[]
   mcpServers: Record<string, McpServer>
 }
-
-// The Agent Skills spec: lowercase name of letters, digits and hyphens, matching the folder; a description.
-const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 export function loadSkill(dir: string): SkillRef {
   const file = join(dir, 'SKILL.md')
