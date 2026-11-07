@@ -1,0 +1,32 @@
+# Coolify: + New → Docker Compose Empty → paste this file → Deploy.
+# Coolify fills the SERVICE_* values itself: the dashboard's https domain, the database password and the
+# encryption secret, so there is nothing to type except ADMIN_GITHUB_LOGINS if it is not mohamedabubasith.
+services:
+  dashboard:
+    image: ghcr.io/mohamedabubasith/basivo-factory-dashboard:latest
+    environment:
+      - SERVICE_FQDN_DASHBOARD_3000
+      - APP_URL=${SERVICE_FQDN_DASHBOARD}
+      - DATABASE_URL=postgres://factory:${SERVICE_PASSWORD_POSTGRES}@db:5432/factory
+      - FACTORY_SECRET=${SERVICE_PASSWORD_64_FACTORY}
+      - ADMIN_GITHUB_LOGINS=${ADMIN_GITHUB_LOGINS:-mohamedabubasith}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=factory
+      - POSTGRES_DB=factory
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factory -d factory"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  db-data:

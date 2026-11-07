@@ -19,7 +19,8 @@ export const env = {
   get appUrl() {
     const url = process.env.APP_URL
       ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')
-    return url.replace(/\/+$/, '')
+    // Hosts like Coolify hand over a bare host name; webhooks and sign-in need a full https address.
+    return (/^https?:\/\//.test(url) ? url : `https://${url}`).replace(/\/+$/, '')
   },
 }
 
