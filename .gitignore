@@ -4,3 +4,7 @@ dist/
 *.log
 .env
 .factory-runs/
+.vercel
+.env*
+
+.vercel
