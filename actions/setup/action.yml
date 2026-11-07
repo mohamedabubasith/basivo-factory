@@ -20,6 +20,9 @@ runs:
         echo "_factory/" >> .git/info/exclude
         git config --global user.name "basivo-factory"
         git config --global user.email "factory@users.noreply.github.com"
+        # pnpm/yarn on PATH for the target project's own installs and tests.
+        corepack enable
+        echo "COREPACK_ENABLE_DOWNLOAD_PROMPT=0" >> "$GITHUB_ENV"
         cd _factory && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile
         echo "FACTORY_MEMORY_DIR=$RUNNER_TEMP/factory-memory" >> "$GITHUB_ENV"
         echo "FACTORY_LOG_DIR=$RUNNER_TEMP/factory-logs" >> "$GITHUB_ENV"

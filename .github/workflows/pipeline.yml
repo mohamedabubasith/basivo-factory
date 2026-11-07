@@ -1,18 +1,39 @@
 # The whole pipeline for one ticket, as a job graph you can watch in the Actions tab:
-#   Capella (intake) → Polaris (plan) → approval gate → Sirius (dev; Rigel tests each attempt) → Vega (review) → Arcturus (ship)
-# A target repo calls it from its own workflow (templates/github/factory.yml).
+#   Capella (intake) → Polaris (plan) → approval → Sirius (dev; Rigel tests each attempt) → Vega (review) → Arcturus (ship)
+# A target repo calls it from its own workflow (templates/github/factory*.yml).
+#
+# run: plan   Capella + Polaris, then stop: the plan waits on the ticket (Jira: someone replies /approve).
+# run: build  Sirius + Vega + Arcturus: the plan was approved on the ticket.
+# run: all    everything in one run, with GitHub's environment approval gate in the middle (GitHub issues).
 name: pipeline
 on:
   workflow_call:
     inputs:
       ticket:
-        description: Issue number of the ticket
+        description: GitHub issue number, or Jira key such as BL-7
         required: true
         type: string
+      run:
+        description: plan, build or all
+        required: false
+        type: string
+        default: all
+      jira_url:
+        description: Jira site, for example https://acme.atlassian.net (empty for GitHub issues)
+        required: false
+        type: string
+        default: ''
+      jira_email:
+        description: Email of the Atlassian account that owns JIRA_API_TOKEN
+        required: false
+        type: string
+        default: ''
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: false
       ANTHROPIC_API_KEY:
+        required: false
+      JIRA_API_TOKEN:
         required: false
 
 env:
@@ -20,15 +41,22 @@ env:
   FACTORY_BASE_BRANCH: ${{ github.event.repository.default_branch }}
   CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  JIRA_BASE_URL: ${{ inputs.jira_url }}
+  JIRA_EMAIL: ${{ inputs.jira_email }}
+  JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+  # The ticket can come from outside (a Jira web request): it reaches the shell only as a quoted variable,
+  # never pasted into a script, and the CLI rejects anything that is not an issue number or a Jira key.
+  TICKET: ${{ inputs.ticket }}
   FACTORY: node _factory/packages/cli/src/index.ts stage
 
 jobs:
   capella:
     name: Capella · intake
+    if: inputs.run != 'build'
     runs-on: ubuntu-latest
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
-      - run: $FACTORY intake --ticket ${{ inputs.ticket }}
+      - run: $FACTORY intake --ticket "$TICKET"
 
   polaris:
     name: Polaris · plan
@@ -36,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
-      - run: $FACTORY plan --ticket ${{ inputs.ticket }}
+      - run: $FACTORY plan --ticket "$TICKET"
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: logs-polaris, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
@@ -44,19 +72,22 @@ jobs:
   approval:
     name: Approve the plan
     needs: polaris
+    if: inputs.run == 'all'
     runs-on: ubuntu-latest
     environment: factory-approval # required reviewers: the run waits here for a person
     steps:
-      - run: echo "Plan for ticket ${{ inputs.ticket }} approved."
+      - run: echo "Plan approved."
 
   sirius:
     name: Sirius · dev (Rigel tests)
     needs: approval
+    # build: runs on its own (approval and plan jobs are skipped); all: only after the gate passed.
+    if: always() && (inputs.run == 'build' || (inputs.run == 'all' && needs.approval.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
-      - run: $FACTORY dev --ticket ${{ inputs.ticket }}
+      - run: $FACTORY dev --ticket "$TICKET"
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: logs-sirius, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
@@ -64,10 +95,11 @@ jobs:
   vega:
     name: Vega · review
     needs: sirius
+    if: always() && needs.sirius.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
-      - run: $FACTORY review --ticket ${{ inputs.ticket }}
+      - run: $FACTORY review --ticket "$TICKET"
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: logs-vega, path: '${{ runner.temp }}/factory-logs', if-no-files-found: ignore }
@@ -75,7 +107,8 @@ jobs:
   arcturus:
     name: Arcturus · ship
     needs: vega
+    if: always() && needs.vega.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
-      - run: $FACTORY ship --ticket ${{ inputs.ticket }}
+      - run: $FACTORY ship --ticket "$TICKET"

@@ -13,6 +13,7 @@ import {
 import { commitAndPush, git, MemoryStore } from '@basivo-factory/memory'
 import { z } from 'zod'
 import { devStep } from './dev-step.ts'
+import type { Tracker } from '@basivo-factory/core'
 import type { GitHub } from './github.ts'
 import { jobSummary, usageRow, usageTable } from './report.ts'
 
@@ -20,12 +21,14 @@ const MEMORY_BIN = fileURLToPath(import.meta.resolve('@basivo-factory/memory/bin
 const MEMORY_BRANCH = 'factory-memory'
 
 export type StageContext = {
-  key: string // ticket key, e.g. GH-12
+  key: string // ticket key: GH-12 (GitHub issue) or BL-7 (Jira)
   repo: string // owner/name
   repoDir: string
   memoryDir: string
   logDir: string
-  tracker: GitHub
+  tracker: Tracker // where the ticket lives: GitHub issues or Jira
+  forge: GitHub // where the code lives: branches, pull requests, run links
+  approveHint: string // how a person approves the plan with this tracker
   baseBranch: string
 }
 
@@ -84,7 +87,7 @@ export async function intake(ctx: StageContext, store: MemoryStore) {
   const ticket = await ctx.tracker.get(ctx.key)
   store.writeDoc(ctx.key, 'ticket', ticket)
   await ctx.tracker.transition(ctx.key, 'in_progress')
-  await ctx.tracker.comment(ctx.key, `**Capella** picked up this ticket. Polaris is planning it. [Follow the run](${ctx.tracker.runUrl()})`)
+  await ctx.tracker.comment(ctx.key, `**Capella** picked up this ticket. Polaris is planning it. [Follow the run](${ctx.forge.runUrl()})`)
   save(ctx, 'intake')
   jobSummary(`### Capella (intake)\nTicket [${ctx.key}](${ticket.url}): ${ticket.title}`)
 }
@@ -110,7 +113,7 @@ export async function plan(ctx: StageContext, store: MemoryStore) {
   store.writeDoc(ctx.key, 'plan', p)
   save(ctx, 'plan')
   const steps = p.steps.map((s, i) => `${i + 1}. ${s.task}\n   - done when: \`${s.doneWhen}\`${s.protect.length ? `\n   - must not edit: ${s.protect.map(f => `\`${f}\``).join(', ')}` : ''}`).join('\n')
-  await ctx.tracker.comment(ctx.key, `**Polaris** planned this ticket in ${p.steps.length} step${p.steps.length === 1 ? '' : 's'}.\n\n${p.summary}\n\n${steps}\n\nApprove the plan to start building: [review the run](${ctx.tracker.runUrl()}) and click **Review deployments**.`)
+  await ctx.tracker.comment(ctx.key, `**Polaris** planned this ticket in ${p.steps.length} step${p.steps.length === 1 ? '' : 's'}.\n\n${p.summary}\n\n${steps}\n\n${ctx.approveHint}`)
   await ctx.tracker.transition(ctx.key, 'awaiting_approval')
   jobSummary(`### Polaris (plan)\n${p.summary}\n\n${steps}\n\n${usageTable(store.usage(ctx.key).filter(r => r.stage === 'plan'))}`)
 }
@@ -160,7 +163,7 @@ export async function dev(ctx: StageContext, store: MemoryStore) {
   const table = usageTable(store.usage(ctx.key).filter(r => r.stage === 'dev'))
   if (state.stage === 'blocked') {
     await ctx.tracker.transition(ctx.key, 'blocked')
-    await ctx.tracker.comment(ctx.key, `**Sirius** is blocked on step ${state.step}: ${p.steps[state.step - 1]!.task}\n\n${state.failures.map((f, i) => `${i + 1}. ${f.slice(0, 500)}`).join('\n')}\n\nA person needs to look. [Run](${ctx.tracker.runUrl()})`)
+    await ctx.tracker.comment(ctx.key, `**Sirius** is blocked on step ${state.step}: ${p.steps[state.step - 1]!.task}\n\n${state.failures.map((f, i) => `${i + 1}. ${f.slice(0, 500)}`).join('\n')}\n\nA person needs to look. [Run](${ctx.forge.runUrl()})`)
     jobSummary(`### Sirius (dev): blocked on step ${state.step}\n\n${table}`)
     throw new Error(`blocked on step ${state.step}`)
   }
@@ -211,13 +214,13 @@ export async function ship(ctx: StageContext, store: MemoryStore) {
     return `${i + 1}. ${s.task}: passed on attempt ${tries.find(a => a.result === 'pass')?.attempt ?? '?'} of ${tries.length}`
   }).join('\n')
   const body = [
-    `Closes #${ctx.key.replace(/^\D+/, '')}`,
+    ctx.key.startsWith('GH-') ? `Closes #${ctx.key.slice(3)}` : `Ticket: [${ctx.key}](${ticket.url})`,
     `## Plan (Polaris)\n${p.summary}\n\n${steps}`,
     `## Review (Vega): ${r.verdict}\n${r.summary}\n\n${findingsList(r)}`,
     `## Agent runs\n${usageTable(rows)}`,
-    `Run logs are attached to [the workflow run](${ctx.tracker.runUrl()}) as artifacts; memory is on the \`${MEMORY_BRANCH}\` branch.`,
+    `Run logs are attached to [the workflow run](${ctx.forge.runUrl()}) as artifacts; memory is on the \`${MEMORY_BRANCH}\` branch.`,
   ].join('\n\n')
-  const pr = await ctx.tracker.openPullRequest({ head: branchFor(ctx.key), base: ctx.baseBranch, title: `${ticket.title} (${ctx.key})`, body })
+  const pr = await ctx.forge.openPullRequest({ head: branchFor(ctx.key), base: ctx.baseBranch, title: `${ticket.title} (${ctx.key})`, body })
   await ctx.tracker.transition(ctx.key, 'in_review')
   await ctx.tracker.comment(ctx.key, `**Arcturus** opened ${pr.url}. Vega's verdict: **${r.verdict}**. ${rows.length} agent runs, $${rows.reduce((t, x) => t + (x.costUsd ?? 0), 0).toFixed(2)} estimated.`)
   jobSummary(`### Arcturus (ship)\n[Pull request #${pr.number}](${pr.url})\n\n${usageTable(rows)}`)

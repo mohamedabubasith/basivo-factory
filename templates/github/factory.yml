@@ -18,4 +18,5 @@ jobs:
     uses: mohamedabubasith/basivo-factory/.github/workflows/pipeline.yml@main
     with:
       ticket: ${{ github.event.issue.number }}
+      run: all
     secrets: inherit
