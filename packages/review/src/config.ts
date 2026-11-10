@@ -9,7 +9,8 @@ import { SEVERITIES } from './schema.ts'
 const Settings = z.object({
   verifier: z.enum(['claude', 'codex']).default('claude'),
   finders: z.enum(['claude', 'codex']).default('claude'),
-  model: z.string().optional(),
+  model: z.string().optional(), // model for the finders (the runtime's default when unset)
+  verifier_model: z.string().optional(), // model for the verifier; needed when the verifier is another runtime
   max_comments: z.number().int().min(0).max(30).default(DEFAULT_RULES.maxComments),
   block_on: z.array(z.enum(SEVERITIES)).default(DEFAULT_RULES.blockOn),
   min_confidence: z.number().min(0).max(1).default(DEFAULT_RULES.minConfidence),

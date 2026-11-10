@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { runnerFor } from '@basivo-factory/agents'
 import { githubForge } from './forge/github.ts'
+import { gitlabForge } from './forge/gitlab.ts'
 import type { Forge } from './forge/types.ts'
 import { setup } from './onboard.ts'
 import { post, renderTerminal, review, type RunOptions } from './run.ts'
@@ -23,11 +24,23 @@ const { positionals, values } = parseArgs({
     pr: { type: 'string' }, repo: { type: 'string' }, 'repo-dir': { type: 'string' }, 'log-dir': { type: 'string' },
     'dry-run': { type: 'boolean', default: false }, json: { type: 'boolean', default: false }, out: { type: 'string' },
     'include-bots': { type: 'boolean', default: false }, ci: { type: 'string' },
+    gitlab: { type: 'boolean', default: false }, host: { type: 'string' },
+    verifier: { type: 'string' }, 'verifier-model': { type: 'string' }, // try another verifier without editing .factory/review.md
   },
 })
 const [command, file] = positionals
 
+// GitLab when the job runs on GitLab CI or a GitLab token is set; GitHub otherwise.
 function forgeFromEnv(): { forge: Forge; number: number | null } {
+  const onGitLab = values.gitlab || Boolean(process.env.GITLAB_CI) || (Boolean(process.env.GITLAB_TOKEN) && !process.env.GH_TOKEN && !process.env.GITHUB_TOKEN)
+  if (onGitLab) {
+    const token = process.env.GITLAB_TOKEN
+    const project = values.repo ?? process.env.CI_PROJECT_PATH
+    if (!token) throw new Error('no GitLab token: set GITLAB_TOKEN (a project access token with the api scope)')
+    if (!project) throw new Error('no project: pass --repo group/name or run inside GitLab CI')
+    const number = values.pr ? Number(values.pr) : process.env.CI_MERGE_REQUEST_IID ? Number(process.env.CI_MERGE_REQUEST_IID) : null
+    return { forge: gitlabForge({ token, project, host: values.host ?? process.env.GITLAB_HOST ?? process.env.CI_SERVER_URL ?? 'https://gitlab.com' }), number }
+  }
   const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const repo = values.repo ?? process.env.GITHUB_REPOSITORY
   if (!token) throw new Error('no GitHub token: set GH_TOKEN or GITHUB_TOKEN')
@@ -60,7 +73,11 @@ if (command === 'run') {
     forge, number, workDir, repoDir,
     logDir: values['log-dir'] ? resolve(values['log-dir']) : (process.env.RUNNER_TEMP ? join(process.env.RUNNER_TEMP, 'basivo-review-logs') : join(workDir, 'logs')),
     runner: (runtime, model) => runnerFor(runtime, model), memoryBin: memoryBin(), dryRun: values['dry-run'],
-    configOverride: values['include-bots'] ? { review_bots: true } : {},
+    configOverride: {
+      ...(values['include-bots'] ? { review_bots: true } : {}),
+      ...(values.verifier === 'claude' || values.verifier === 'codex' ? { verifier: values.verifier } : {}),
+      ...(values['verifier-model'] ? { verifier_model: values['verifier-model'] } : {}),
+    },
   }
   const result = await review(opts)
   if (values.out) writeFileSync(values.out, JSON.stringify(result, null, 2))
@@ -79,7 +96,7 @@ if (command === 'run') {
   const r = await setup({
     repoDir, runner: runnerFor('claude'), logDir: values['log-dir'] ? resolve(values['log-dir']) : null,
     ci: values.ci === 'github' || values.ci === 'gitlab' ? values.ci : null,
-    reviewTemplate: readTemplate('review/github.yml'), readmeTemplate: readTemplate('repo/.factory/knowledge/README.md'), dryRun: values['dry-run'],
+    reviewTemplate: readTemplate(values.ci === 'gitlab' ? 'review/gitlab-ci.yml' : 'review/github.yml'), readmeTemplate: readTemplate('repo/.factory/knowledge/README.md'), dryRun: values['dry-run'],
   })
   if (values.json) console.log(JSON.stringify(r, null, 2))
   else {

@@ -83,7 +83,7 @@ export async function review(o: RunOptions): Promise<ReviewResult> {
   })
 
   // Verify each candidate in its own fresh context, a few at a time.
-  const verifier = o.runner(ctx.config.verifier, model)
+  const verifier = o.runner(ctx.config.verifier, ctx.config.verifier_model ?? (ctx.config.verifier === ctx.config.finders ? model : undefined))
   const queue = [...fresh]
   const verified: VerifiedFinding[] = []
   await Promise.all(Array.from({ length: VERIFY_CONCURRENCY }, async () => {

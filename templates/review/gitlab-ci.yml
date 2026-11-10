@@ -1,0 +1,26 @@
+# Add this job to .gitlab-ci.yml. basivo-review reads every merge request, verifies what it finds, and posts
+# inline discussions plus one summary note that says "ready to merge" or "needs changes". It never approves.
+#
+# CI/CD variables (Settings → CI/CD → Variables, masked):
+#   GITLAB_TOKEN              project or group access token with the "api" scope (the job token cannot post notes)
+#   CLAUDE_CODE_OAUTH_TOKEN   from `claude setup-token`, or ANTHROPIC_API_KEY
+# Rules and project knowledge come from .factory/review.md and .factory/knowledge/ on the target branch.
+review:
+  stage: test
+  image: node:24
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  timeout: 30m
+  interruptible: true
+  variables:
+    GIT_DEPTH: "1"
+  before_script:
+    - git clone --quiet --depth 1 https://github.com/mohamedabubasith/basivo-factory.git _factory
+    - corepack enable
+    - cd _factory && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --silent && cd ..
+  script:
+    - node _factory/packages/review/src/cli.ts run --repo-dir "$CI_PROJECT_DIR" --log-dir "$CI_PROJECT_DIR/.basivo-review-logs"
+  artifacts:
+    when: always
+    paths: [.basivo-review-logs/]
+    expire_in: 2 weeks

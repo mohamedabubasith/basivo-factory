@@ -83,6 +83,8 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
         approvalPolicy: 'never',
         // Same reach as the Claude runner: the agent may install packages its tests need.
         networkAccessEnabled: true,
+        // The reviewer may hand over a plain folder of staged files, not a git checkout.
+        skipGitRepoCheck: true,
       })
       const abort = new AbortController()
       const timer = setTimeout(() => abort.abort(), req.timeoutMs)
