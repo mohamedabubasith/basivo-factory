@@ -42,6 +42,7 @@ export type SkillRef = { name: string; description: string; dir: string }
 // T is what the agent must hand back: the dev report by default, a plan for Polaris, a review for Vega.
 export type AgentRequest<T = AgentReport> = {
   role: Role // picks the base prompt; the profile's instructions are added after it
+  prompt?: string // a full system prompt of its own, replacing the role's base prompt (reviewer passes use this)
   output: z.ZodType<T>
   brief: string
   cwd: string

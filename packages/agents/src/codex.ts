@@ -89,7 +89,7 @@ export function codexRunner({ model }: { model?: string } = {}): AgentRunner {
       req.log.write('start', { runner: 'codex', role: req.role, model: model ?? 'default', access: req.access, briefChars: req.brief.length, instructionsChars: req.instructions.length, skills: req.skills.map(s => s.name), mcp: Object.keys(req.mcpServers) })
       let final = ''
       try {
-        const { events } = await thread.runStreamed(`${basePrompt(req.role)}\n\n${req.brief}`, { outputSchema: outputJsonSchema(req.output), signal: abort.signal })
+        const { events } = await thread.runStreamed(`${req.prompt ?? basePrompt(req.role)}\n\n${req.brief}`, { outputSchema: outputJsonSchema(req.output), signal: abort.signal })
         for await (const ev of events) {
           logEvent(req, ev)
           if (ev.type === 'item.completed' && ev.item.type === 'agent_message') final = ev.item.text

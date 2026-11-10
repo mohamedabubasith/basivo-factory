@@ -69,7 +69,7 @@ export function claudeRunner({ model }: { model?: string } = {}): AgentRunner {
           options: {
             cwd: req.cwd,
             model,
-            systemPrompt: req.instructions ? [basePrompt(req.role), req.instructions] : basePrompt(req.role),
+            systemPrompt: req.instructions ? [req.prompt ?? basePrompt(req.role), req.instructions] : (req.prompt ?? basePrompt(req.role)),
             tools,
             allowedTools: [...tools, ...Object.keys(req.mcpServers).map(name => `mcp__${name}`)],
             permissionMode: 'dontAsk',

@@ -1,0 +1,15 @@
+{
+  "name": "basivo-review",
+  "version": "0.1.0",
+  "description": "One reviewer agent for GitHub pull requests and GitLab merge requests: finds, verifies and posts inline findings.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "basivo-review": "./src/cli.ts" },
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@basivo-factory/agents": "workspace:*",
+    "@basivo-factory/core": "workspace:*",
+    "@basivo-factory/memory": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}
