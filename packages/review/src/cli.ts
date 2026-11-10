@@ -13,6 +13,7 @@ import { parseArgs } from 'node:util'
 import { runnerFor } from '@basivo-factory/agents'
 import { githubForge } from './forge/github.ts'
 import type { Forge } from './forge/types.ts'
+import { setup } from './onboard.ts'
 import { post, renderTerminal, review, type RunOptions } from './run.ts'
 import type { ReviewResult } from './schema.ts'
 
@@ -21,7 +22,7 @@ const { positionals, values } = parseArgs({
   options: {
     pr: { type: 'string' }, repo: { type: 'string' }, 'repo-dir': { type: 'string' }, 'log-dir': { type: 'string' },
     'dry-run': { type: 'boolean', default: false }, json: { type: 'boolean', default: false }, out: { type: 'string' },
-    'include-bots': { type: 'boolean', default: false },
+    'include-bots': { type: 'boolean', default: false }, ci: { type: 'string' },
   },
 })
 const [command, file] = positionals
@@ -70,12 +71,32 @@ if (command === 'run') {
     const p = await post(forge, result)
     console.error(`posted ${p.posted} inline comment(s)${p.failed ? `, ${p.failed} could not be anchored` : ''}; summary: ${p.summaryUrl}`)
   }
+} else if (command === 'setup') {
+  // Teach the reviewer this repository: writes .factory/knowledge/*.md, .factory/review.md and, with --ci, the workflow.
+  const repoDir = resolve(values['repo-dir'] ?? '.')
+  const templates = new URL('../../../templates/', import.meta.url)
+  const readTemplate = (p: string) => { try { return readFileSync(new URL(p, templates), 'utf8') } catch { return null } }
+  const r = await setup({
+    repoDir, runner: runnerFor('claude'), logDir: values['log-dir'] ? resolve(values['log-dir']) : null,
+    ci: values.ci === 'github' || values.ci === 'gitlab' ? values.ci : null,
+    reviewTemplate: readTemplate('review/github.yml'), readmeTemplate: readTemplate('repo/.factory/knowledge/README.md'), dryRun: values['dry-run'],
+  })
+  if (values.json) console.log(JSON.stringify(r, null, 2))
+  else {
+    console.log(`Repository: ${r.survey.files} files; main areas: ${r.survey.topFolders.slice(0, 8).join(', ')}`)
+    console.log(r.written.length ? `Written:\n${r.written.map(p => `  ${p}`).join('\n')}` : 'Nothing written.')
+    if (r.kept.length) console.log(`Kept as written by the team:\n${r.kept.map(p => `  ${p}`).join('\n')}`)
+    if (r.reverted.length) console.log(`Reverted:\n${r.reverted.map(p => `  ${p}`).join('\n')}`)
+    if (r.skipped.length) console.log(`Skipped:\n${r.skipped.map(p => `  ${p}`).join('\n')}`)
+    for (const n of r.notes) console.log(`note: ${n}`)
+    console.log(`${r.usage.runs} run(s), ~$${r.usage.costUsd.toFixed(2)}`)
+  }
 } else if (command === 'post' && file) {
   const result = JSON.parse(readFileSync(file, 'utf8')) as ReviewResult
   const { forge } = forgeFromEnv()
   const p = await post(forge, result)
   console.log(`posted ${p.posted} inline comment(s)${p.failed ? `, ${p.failed} could not be anchored` : ''}; summary: ${p.summaryUrl}`)
 } else {
-  console.error('usage: basivo-review run [--pr N] [--repo owner/name] [--repo-dir DIR] [--dry-run] [--json] [--out FILE] | post FILE')
+  console.error('usage: basivo-review run [--pr N] [--repo owner/name] [--repo-dir DIR] [--dry-run] [--json] [--out FILE] | post FILE | setup [--repo-dir DIR] [--ci github] [--dry-run]')
   process.exit(1)
 }
