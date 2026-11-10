@@ -1,7 +1,10 @@
 # Copy to .github/workflows/review.yml. basivo-review reads every pull request, verifies what it finds, and
 # posts inline comments plus one summary that says "ready to merge" or "needs changes". It never approves or
 # blocks on its own.
-# Secrets: CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY.
+# Secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN   Claude Code login, from `claude setup-token`
+#   CODEX_AUTH_JSON           only with `verifier: codex` in .factory/review.md: the contents of ~/.codex/auth.json
+#                             after `codex login` on your machine
 # Rules and project knowledge come from .factory/review.md and .factory/knowledge/ on the base branch.
 name: review
 on:
@@ -27,11 +30,15 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: mohamedabubasith/basivo-factory/actions/setup@main
+      - name: Codex login
+        if: ${{ secrets.CODEX_AUTH_JSON != '' }}
+        run: mkdir -p ~/.codex && printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json && chmod 600 ~/.codex/auth.json
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
       - run: node _factory/packages/review/src/cli.ts run --repo-dir "$GITHUB_WORKSPACE"
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: review-logs, path: '${{ runner.temp }}/basivo-review-logs', if-no-files-found: ignore }

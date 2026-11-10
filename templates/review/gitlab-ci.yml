@@ -3,7 +3,8 @@
 #
 # CI/CD variables (Settings → CI/CD → Variables, masked):
 #   GITLAB_TOKEN              project or group access token with the "api" scope (the job token cannot post notes)
-#   CLAUDE_CODE_OAUTH_TOKEN   from `claude setup-token`, or ANTHROPIC_API_KEY
+#   CLAUDE_CODE_OAUTH_TOKEN   Claude Code login, from `claude setup-token`
+#   CODEX_AUTH_JSON           only with `verifier: codex`: the contents of ~/.codex/auth.json after `codex login`
 # Rules and project knowledge come from .factory/review.md and .factory/knowledge/ on the target branch.
 review:
   stage: test
@@ -18,6 +19,7 @@ review:
     - git clone --quiet --depth 1 https://github.com/mohamedabubasith/basivo-factory.git _factory
     - corepack enable
     - cd _factory && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --silent && cd ..
+    - if [ -n "$CODEX_AUTH_JSON" ]; then mkdir -p ~/.codex && printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json && chmod 600 ~/.codex/auth.json; fi
   script:
     - node _factory/packages/review/src/cli.ts run --repo-dir "$CI_PROJECT_DIR" --log-dir "$CI_PROJECT_DIR/.basivo-review-logs"
   artifacts:
