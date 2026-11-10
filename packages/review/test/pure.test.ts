@@ -108,6 +108,14 @@ describe('preverify', () => {
     expect(kept[0]!.confidence).toBeCloseTo(0.8)
     expect(kept[0]!.claim).toContain('ADR 0001')
   })
+  it('merges two passes describing one problem under different severities, keeping the stronger one', () => {
+    const { kept } = preverify([
+      finding({ line: 3, severity: 'decision', claim: 'lineTotal rounds each line to cents, breaking ADR 0001: line totals stay unrounded, round once at the end' }),
+      finding({ line: 4, severity: 'bug', claim: 'lineTotal now rounds per line, violating ADR 0001 (line totals stay unrounded, round once at the end)', evidence: 'return Math.round(sum * 100) / 100' }),
+      finding({ line: 4, severity: 'test', claim: 'No test covers the SAVE10 path', evidence: 'return Math.round(sum * 100) / 100' }),
+    ], map, read)
+    expect(kept.map(k => [k.severity, k.agreement])).toEqual([['bug', 2], ['test', 1]])
+  })
   it('accepts a deleted-line finding without reading the new file', () => {
     const { kept } = preverify([finding({ side: 'LEFT', line: 2, evidence: 'a + i.price * i.qty, 0)' })], map, () => null)
     expect(kept).toHaveLength(1)

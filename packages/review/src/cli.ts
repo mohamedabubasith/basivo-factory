@@ -5,6 +5,7 @@
 // On GitHub Actions the PR, repo and token come from the environment. Elsewhere pass --pr and set
 // GH_TOKEN or GITHUB_TOKEN (the terminal skill fills these from `gh auth token`).
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -44,8 +45,18 @@ if (command === 'run') {
   const { forge, number } = forgeFromEnv()
   if (!number) throw new Error('which pull request? pass --pr N')
   const workDir = mkdtempSync(join(tmpdir(), 'basivo-review-'))
+  // A checkout helps the agents search around the change, but only if it is at the pull request's head.
+  let repoDir = values['repo-dir'] ? resolve(values['repo-dir']) : null
+  if (repoDir) {
+    const head = (await forge.change(number)).head.sha
+    const local = spawnSync('git', ['-C', repoDir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim()
+    if (local !== head) {
+      console.error(`--repo-dir is at ${local.slice(0, 7)}, the pull request head is ${head.slice(0, 7)}: using the changed files at the head commit instead`)
+      repoDir = null
+    }
+  }
   const opts: RunOptions = {
-    forge, number, workDir, repoDir: values['repo-dir'] ? resolve(values['repo-dir']) : null,
+    forge, number, workDir, repoDir,
     logDir: values['log-dir'] ? resolve(values['log-dir']) : (process.env.RUNNER_TEMP ? join(process.env.RUNNER_TEMP, 'basivo-review-logs') : join(workDir, 'logs')),
     runner: (runtime, model) => runnerFor(runtime, model), memoryBin: memoryBin(), dryRun: values['dry-run'],
     configOverride: values['include-bots'] ? { review_bots: true } : {},

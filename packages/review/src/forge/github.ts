@@ -77,9 +77,11 @@ export function githubForge({ token, repo, api = process.env.GITHUB_API_URL ?? '
     },
 
     async ciStatus(sha) {
-      type Runs = { check_runs: { name: string; status: string; conclusion: string | null }[] }
+      type Runs = { check_runs: { name: string; status: string; conclusion: string | null; html_url: string }[] }
       const { check_runs: runs } = await call<Runs>('GET', `/commits/${sha}/check-runs?per_page=100`)
-      const mine = runs.filter(r => !/basivo-review/i.test(r.name))
+      // Not our own job: on a runner it is the one still "in progress" while this code runs.
+      const own = process.env.GITHUB_RUN_ID ? `/runs/${process.env.GITHUB_RUN_ID}/` : null
+      const mine = runs.filter(r => !/basivo-review/i.test(r.name) && !(own && r.html_url.includes(own)))
       if (mine.length === 0) return { state: 'none', detail: 'no checks' } satisfies CiStatus
       const failed = mine.filter(r => r.conclusion && !['success', 'neutral', 'skipped'].includes(r.conclusion))
       const pending = mine.filter(r => r.status !== 'completed')

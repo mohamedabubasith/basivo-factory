@@ -96,8 +96,9 @@ export async function gather(forge: Forge, number: number, workDir: string, over
   mkdirSync(workDir, { recursive: true })
   writeFileSync(diffFile, renderDiff(map))
 
-  // Knowledge from the base branch, staged where the kb tools can search it.
-  const knowledgePaths = (await forge.listDir(KNOWLEDGE_DIR, change.base.ref)).filter(p => p.endsWith('.md'))
+  // Knowledge from the base branch, staged where the kb tools can search it: the team's docs folder too,
+  // since decisions (ADRs) usually live there.
+  const knowledgePaths = [...await forge.listDir(KNOWLEDGE_DIR, change.base.ref), ...await forge.listDir('docs', change.base.ref)].filter(p => p.endsWith('.md'))
   let knowledgeDir: string | null = null
   if (knowledgePaths.length) {
     knowledgeDir = join(workDir, 'knowledge')
@@ -130,7 +131,7 @@ export function buildBrief(ctx: Context): string {
     `The unified diff is in ${ctx.diffFile}; read it with the Read tool, then open the changed files for context.`,
     `CI on the head commit: ${ctx.ci.detail}.`,
     config.rules ? `Team review rules:\n${cut(config.rules, 1500)}` : '',
-    ctx.knowledgePaths.length ? `Project knowledge (search with kb_search, read with kb_read): ${ctx.knowledgePaths.map(p => p.replace(`${KNOWLEDGE_DIR}/`, '')).join(', ')}` : '',
+    ctx.knowledgePaths.length ? `Project knowledge (search with kb_search, read with kb_read): ${ctx.knowledgePaths.join(', ')}` : '',
     `Changed files (${fileLines.length}):`,
     ...fileLines.slice(0, fileCount),
     fileLines.length > fileCount ? `… and ${fileLines.length - fileCount} more in the diff` : '',

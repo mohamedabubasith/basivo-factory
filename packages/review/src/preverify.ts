@@ -9,6 +9,18 @@ import type { Finding, VerifiedFinding } from './schema.ts'
 export type FileReader = (path: string) => string | null // file at the head commit, null when missing
 
 const LINE_SLACK = 3
+const NEAR = 6 // two passes describing one problem rarely point at the same line; a nearby line with the same words is the same finding
+
+const SEVERITY_ORDER = ['security', 'bug', 'data', 'decision', 'test']
+const words = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9_]{4,}/g) ?? [])
+export function similarClaims(a: string, b: string): boolean {
+  const x = words(a)
+  const y = words(b)
+  if (x.size === 0 || y.size === 0) return false
+  let shared = 0
+  for (const w of x) if (y.has(w)) shared++
+  return shared / Math.min(x.size, y.size) >= 0.5
+}
 
 export function preverify(findings: Finding[], map: HunkMap, readFile: FileReader): { kept: VerifiedFinding[]; dropped: VerifiedFinding[] } {
   const kept: VerifiedFinding[] = []
@@ -46,11 +58,13 @@ export function preverify(findings: Finding[], map: HunkMap, readFile: FileReade
       drop(f, `line ${f.line} is not in the diff`)
       continue
     }
-    const same = kept.find(k => k.file === f.file && k.side === f.side && k.severity === f.severity && Math.abs(k.line - line) <= LINE_SLACK)
+    const same = kept.find(k => k.file === f.file && k.side === f.side && (
+      (k.severity === f.severity && Math.abs(k.line - line) <= LINE_SLACK) || (Math.abs(k.line - line) <= NEAR && similarClaims(k.claim, f.claim))))
     if (same) {
       same.agreement += 1
       same.confidence = Math.min(1, Math.max(same.confidence, f.confidence) + 0.1)
       if (f.claim.length > same.claim.length) same.claim = f.claim
+      if (SEVERITY_ORDER.indexOf(f.severity) < SEVERITY_ORDER.indexOf(same.severity)) same.severity = f.severity
       continue
     }
     kept.push({ ...f, line, agreement: 1, verification: null, rejectedBy: null, rejectReason: null })
